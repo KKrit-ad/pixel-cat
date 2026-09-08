@@ -13,3 +13,7 @@ PixelCat.app/Contents/_CodeSignature/
 *.replaced-*
 *.before-*
 *.pre-*
+
+# debug snapshot ที่แอปเขียนออกมาเอง
+bubble-snap.png
+view-snap.png
