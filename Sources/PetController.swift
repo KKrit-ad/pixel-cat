@@ -34,6 +34,10 @@ final class PetController: NSObject {
         let sessionID: String       // ใช้ทำ claude://resume?session=... เข้าห้องนั้นตรง ๆ
         let topic: String           // หัวข้อห้องสนทนา — Claude ตั้งชื่อให้เอง
         var activity: WorkActivitySignal = .idle
+        var pid: Int = 0            // โปรเซส Claude/Codex ตัวจริง — ตายแล้วห้องนี้ก็ไม่นับ
+        var startedAt: Double = 0   // เวลาที่ห้องเริ่ม ใช้บอกว่าห้องไหนเปิดทีหลัง
+        var recentFiles: [String] = []  // ไฟล์ที่ห้องนั้นแก้ล่าสุด
+        var lastRequest: String = ""    // คำสั่งล่าสุดของพ่อในห้องนั้น
     }
     private struct WorkNotice {
         let session: WorkSession
@@ -1010,7 +1014,7 @@ final class PetController: NSObject {
                     && self.contextRescueOffered.count == 1 && self.activeContextRescue == nil
                 let handoff = self.lastSimulatedHandoff.contains("Context Rescue")
                     && self.lastSimulatedHandoff.contains("pixel-cat")
-                    && self.lastSimulatedHandoff.contains("ตรวจสถานะ working tree")
+                    && self.lastSimulatedHandoff.contains("อย่าทำซ้ำ")
                 let claudeURL = URLComponents(string: self.lastSimulatedNewTaskURL)
                 let claudeNew = claudeURL?.scheme == "claude" && claudeURL?.host == "code"
                     && claudeURL?.path == "/new"
@@ -1033,12 +1037,62 @@ final class PetController: NSObject {
                 self.evaluateContextPressure([makeSession("claude", "rescue-source", 60)])
                 self.evaluateContextPressure([hot])
                 let reset = self.activeContextRescue?.session.id == hot.id
+
+                // ห้องเก่าที่พ่อเปิดห้องใหม่ในโฟลเดอร์เดียวกันไปแล้ว ต้องไม่ถูกเตือนอีก
+                self.activeContextRescue = nil
+                self.contextRescueOffered.removeAll()
+                self.ctxWarned = 0
+                var old = makeSession("claude", "old-room", 99)
+                old.startedAt = 100
+                var fresh = makeSession("claude", "new-room", 12)
+                fresh.startedAt = 200
+                self.evaluateContextPressure([old, fresh])
+                let supersededQuiet = self.activeContextRescue == nil
+                self.evaluateContextPressure([old])
+                let stillRescuesAlone = self.activeContextRescue?.session.id == old.id
+                let superseded = supersededQuiet && stillRescuesAlone
+
+                // handoff ต้องบอกให้ครบว่าโปรเจกต์คืออะไร ทำอะไรไปแล้ว และห้องเก่าแตะไฟล์ไหน
+                let fm = FileManager.default
+                let repo = fm.temporaryDirectory
+                    .appendingPathComponent("pixelcat-rescue-repo-\(UUID().uuidString)")
+                try? fm.createDirectory(at: repo, withIntermediateDirectories: true)
+                try? "# Demo\n\nแมวจิ๋วเฝ้างานบนเดสก์ท็อป\n".write(
+                    to: repo.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+                for args in [["init", "-q"], ["add", "-A"],
+                             ["-c", "user.email=cat@pixel", "-c", "user.name=cat",
+                              "commit", "-qm", "ปักหมุดงานแรก"]] {
+                    _ = self.readOnlyShell("/usr/bin/git", args, in: repo.path)
+                }
+                try? "ยังไม่คอมมิต".write(to: repo.appendingPathComponent("draft.txt"),
+                                          atomically: true, encoding: .utf8)
+                var detailed = makeSession("claude", "detail-room", 96)
+                detailed = WorkSession(
+                    source: "claude", id: detailed.id, state: "idle", name: "demo",
+                    cwd: repo.path, message: "", updatedAt: 1, contextPercent: 96,
+                    focusURL: "", appPIDs: [], sessionID: detailed.id, topic: "งานเดโม",
+                    recentFiles: [repo.path + "/Sources/Demo.swift"],
+                    lastRequest: "ทำระบบเดโมให้หน่อย"
+                )
+                let text = self.contextHandoff(for: detailed)
+                let detail = text.contains("แมวจิ๋วเฝ้างานบนเดสก์ท็อป")
+                    && text.contains("ปักหมุดงานแรก")
+                    && text.contains("branch:")
+                    && text.contains("1 ไฟล์ที่ยังไม่คอมมิต")
+                    && text.contains("Sources/Demo.swift")
+                    && text.contains("ทำระบบเดโมให้หน่อย")
+                if let dir = ProcessInfo.processInfo.environment["PIXELCAT_HANDOFF_OUT"] {
+                    try? text.write(toFile: dir, atomically: true, encoding: .utf8)
+                }
+                try? fm.removeItem(at: repo)
+
                 let ok = threshold && once && packed && handoff && codexNew
-                    && claudeNew && focusDeferred && reset
+                    && claudeNew && focusDeferred && reset && superseded && detail
                 FileHandle.standardError.write(
                     ("SIM CONTEXT RESCUE threshold=\(threshold) once=\(once) packed=\(packed) "
                      + "handoff=\(handoff) codexNew=\(codexNew) claudeNew=\(claudeNew) "
-                     + "focusDeferred=\(focusDeferred) reset=\(reset)\n").data(using: .utf8)!
+                     + "focusDeferred=\(focusDeferred) reset=\(reset) "
+                     + "superseded=\(superseded) detail=\(detail)\n").data(using: .utf8)!
                 )
                 NSApp.terminate(nil)
                 if !ok { exit(2) }
@@ -3293,6 +3347,66 @@ final class PetController: NSObject {
 
     /// สรุปข้อมูลที่แอปรู้จริงเท่านั้น แล้วให้ task ใหม่ตรวจ working tree ต่อเอง
     /// จึงไม่แต่งสถานะงานหรืออ้างว่ามีรายละเอียดที่ไม่ได้อ่านจาก session
+    /// รันคำสั่งอ่านอย่างเดียวในโฟลเดอร์งาน คืนบรรทัดที่อ่านได้ ไม่ค้างถ้าคำสั่งเงียบ
+    private func readOnlyShell(_ launch: String, _ args: [String], in cwd: String,
+                               limit: Int = 4000) -> String {
+        guard !cwd.isEmpty,
+              FileManager.default.fileExists(atPath: cwd) else { return "" }
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: launch)
+        task.arguments = args
+        task.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        do { try task.run() } catch { return "" }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit()
+        guard task.terminationStatus == 0,
+              let text = String(data: data, encoding: .utf8) else { return "" }
+        return String(text.prefix(limit)).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// หนึ่งประโยคว่าโปรเจกต์นี้คืออะไร หยิบจากเอกสารในโฟลเดอร์ ไม่ต้องให้ห้องใหม่เดา
+    private func projectSummary(cwd: String) -> String {
+        for doc in ["CLAUDE.md", "README.md"] {
+            let path = cwd + "/" + doc
+            guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { continue }
+            for raw in text.split(separator: "\n", omittingEmptySubsequences: true) {
+                let line = raw.trimmingCharacters(in: .whitespaces)
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "#*_> "))
+                guard line.count >= 12, !line.hasPrefix("!"), !line.hasPrefix("[") else { continue }
+                return String(line.prefix(200))
+            }
+        }
+        return ""
+    }
+
+    /// สภาพโค้ดตอนนี้จริง ๆ — ห้องใหม่จะได้เห็นว่าอะไรถูกคอมมิตไปแล้ว ไม่ทำซ้ำ
+    private func repositoryBriefing(cwd: String) -> [String] {
+        guard !readOnlyShell("/usr/bin/git", ["rev-parse", "--is-inside-work-tree"],
+                             in: cwd, limit: 20).isEmpty else { return [] }
+        var lines: [String] = []
+        let branch = readOnlyShell("/usr/bin/git", ["rev-parse", "--abbrev-ref", "HEAD"],
+                                   in: cwd, limit: 120)
+        if !branch.isEmpty { lines.append("branch: \(branch)") }
+        let log = readOnlyShell("/usr/bin/git", ["log", "-5", "--pretty=format:%h %ad %s",
+                                                "--date=format:%m-%d %H:%M"], in: cwd, limit: 1200)
+        if !log.isEmpty {
+            lines.append("คอมมิตล่าสุด (งานที่ทำเสร็จไปแล้ว ห้ามทำซ้ำ):")
+            lines.append(contentsOf: log.split(separator: "\n").map { "  - " + $0 })
+        }
+        let status = readOnlyShell("/usr/bin/git", ["status", "--porcelain"], in: cwd, limit: 4000)
+        if status.isEmpty {
+            lines.append("working tree: สะอาด ไม่มีงานค้างกลางคัน")
+        } else {
+            let changed = status.split(separator: "\n")
+            lines.append("working tree: มี \(changed.count) ไฟล์ที่ยังไม่คอมมิต")
+            lines.append(contentsOf: changed.prefix(10).map { "  - " + $0.trimmingCharacters(in: .whitespaces) })
+        }
+        return lines
+    }
+
     private func contextHandoff(for session: WorkSession) -> String {
         let source = workSourceName(session)
         let topic = sessionHeadline(session)
@@ -3322,9 +3436,36 @@ final class PetController: NSObject {
         if !latest.isEmpty {
             lines.append("ข้อความสถานะล่าสุด: " + String(latest.prefix(800)))
         }
+
+        let summary = projectSummary(cwd: session.cwd)
+        if !summary.isEmpty {
+            lines.append(contentsOf: ["", "โปรเจกต์นี้คืออะไร: " + summary])
+        }
+        let request = session.lastRequest.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !request.isEmpty {
+            lines.append(contentsOf: ["", "คำสั่งล่าสุดของผู้ใช้ในห้องเก่า:",
+                                      String(request.prefix(400))])
+        }
+        if !session.recentFiles.isEmpty {
+            let shown = session.recentFiles.map { path -> String in
+                guard !session.cwd.isEmpty, path.hasPrefix(session.cwd + "/") else { return path }
+                return String(path.dropFirst(session.cwd.count + 1))
+            }
+            lines.append(contentsOf: ["", "ไฟล์ที่ห้องเก่าแก้ล่าสุด:"]
+                         + shown.map { "  - " + $0 })
+        }
+        let repo = repositoryBriefing(cwd: session.cwd)
+        if !repo.isEmpty {
+            lines.append(contentsOf: [""] + repo)
+        }
+
         lines.append(contentsOf: [
             "",
-            "ก่อนแก้ไฟล์ ให้ตรวจสถานะ working tree และอ่านไฟล์ที่เกี่ยวข้องเพื่อยืนยันสิ่งที่ทำเสร็จแล้ว จากนั้นสรุปสิ่งที่ยังเหลือและทำต่อโดยไม่ย้อนงานที่เสร็จไปแล้ว หากข้อมูลไม่พอให้ถามผู้ใช้สั้น ๆ หนึ่งคำถาม"
+            "เริ่มงานแบบนี้:",
+            "1. อ่าน git log และ working tree ข้างบน แล้วเปิดไฟล์ที่เกี่ยวข้องเพื่อดูว่าหัวข้องานนี้ทำเสร็จไปแล้วหรือยัง",
+            "2. ถ้าเสร็จแล้ว อย่าทำซ้ำ — บอกผู้ใช้สั้น ๆ ว่าเสร็จแล้วที่คอมมิตไหน แล้วถามว่าจะให้ทำอะไรต่อ",
+            "3. ถ้ายังไม่เสร็จ สรุปสิ่งที่เหลือก่อน แล้วทำต่อโดยไม่ย้อนงานที่เสร็จไปแล้ว",
+            "หากข้อมูลไม่พอให้ถามผู้ใช้สั้น ๆ หนึ่งคำถาม"
         ])
         return lines.joined(separator: "\n")
     }
@@ -3449,7 +3590,23 @@ final class PetController: NSObject {
     }
 
     /// ประเมินทุก session แต่เสนอ rescue เพียงครั้งเดียวจนกว่า context จะลดต่ำกว่า 70%
-    private func evaluateContextPressure(_ sessions: [WorkSession]) {
+    /// ห้องที่พ่อเปิดห้องใหม่ในโฟลเดอร์เดียวกันไปแล้ว ถือว่าย้ายไปทำต่อที่นั่นแล้ว
+    /// ไม่ต้องเตือน context หรือคาบ handoff มาให้อีก
+    private func supersededSessions(_ sessions: [WorkSession]) -> Set<String> {
+        var superseded = Set<String>()
+        for session in sessions where !session.cwd.isEmpty {
+            let hasNewerRoom = sessions.contains {
+                $0.cwd == session.cwd && noticeKey($0) != noticeKey(session)
+                    && $0.startedAt > session.startedAt
+            }
+            if hasNewerRoom { superseded.insert(noticeKey(session)) }
+        }
+        return superseded
+    }
+
+    private func evaluateContextPressure(_ allSessions: [WorkSession]) {
+        let superseded = supersededSessions(allSessions)
+        let sessions = allSessions.filter { !superseded.contains(noticeKey($0)) }
         let liveKeys = Set(sessions.filter { $0.contextPercent >= 70 }.map(noticeKey))
         contextRescueOffered.formIntersection(liveKeys)
         guard let hottest = sessions.filter({ $0.contextPercent > 0 })
@@ -5440,12 +5597,18 @@ final class PetController: NSObject {
             // ไฟล์รุ่นเก่ายังไม่มี session_id แต่ชื่อไฟล์ก็คือ UUID เดียวกัน
             let sid = (j["session_id"] as? String) ?? n
             let topic = (j["topic"] as? String) ?? ""
+            let pid = (j["pid"] as? Int) ?? 0
+            // ห้องที่โปรเซสตายไปแล้วแต่ไฟล์ยังค้าง ไม่ควรถูกนับหรือเอามาเตือน context
+            if pid > 0, kill(pid_t(pid), 0) != 0, errno == ESRCH { continue }
             sessions.append(WorkSession(source: "claude", id: n, state: normalizedState, name: name, cwd: cwd,
                                         message: message, updatedAt: at,
                                         contextPercent: pct,
                                         focusURL: focus.hasPrefix("warp://") ? focus : "",
                                         appPIDs: apids, sessionID: sid, topic: topic,
-                                        activity: activity))
+                                        activity: activity, pid: pid,
+                                        startedAt: (j["started"] as? Double) ?? at,
+                                        recentFiles: ((j["files"] as? [String]) ?? []).prefix(8).map { $0 },
+                                        lastRequest: (j["last_user"] as? String) ?? ""))
             if ["input", "ask", "waiting"].contains(normalizedState) { waiting.append(name) }
             else if ["working", "busy"].contains(normalizedState) { working += 1 }
         }

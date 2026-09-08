@@ -16,7 +16,7 @@ rg -q '"rescueReady".*Pose\(start: 58, count: 1' Sources main.swift || {
 
 PIXELCAT_SIMCONTEXTRESCUE=1 ./PixelCat.app/Contents/MacOS/PixelCat >"$LOG" 2>&1
 STATUS=$?
-if (( STATUS != 0 )) || ! rg -q 'SIM CONTEXT RESCUE threshold=true once=true packed=true handoff=true codexNew=true claudeNew=true focusDeferred=true reset=true' "$LOG"; then
+if (( STATUS != 0 )) || ! rg -q 'SIM CONTEXT RESCUE threshold=true once=true packed=true handoff=true codexNew=true claudeNew=true focusDeferred=true reset=true superseded=true detail=true' "$LOG"; then
     print -u2 "FAIL: Context Rescue behavior"
     cat "$LOG" >&2
     exit 1
