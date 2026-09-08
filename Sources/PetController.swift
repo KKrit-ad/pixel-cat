@@ -263,6 +263,7 @@ final class PetController: NSObject {
     private var activeContextRescue: ContextRescue?
     /// แอปตีลิงก์ห้องกลับมาแล้วอย่างน้อยหนึ่งครั้ง — ครั้งต่อไปดึงแอปขึ้นหน้าเลย ไม่ต้องลองซ้ำ
     private var claudeSessionLinkBlocked = false
+    private var askedForAccessibility = false
     private var lastSimulatedNewTaskURL = ""
     private var lastSimulatedHandoff = ""
     private var codexContextCache: [String: (modified: Date, size: UInt64, percent: Double)] = [:]
@@ -427,17 +428,38 @@ final class PetController: NSObject {
                                       sessionID: sid)
             // ไม่มี session id ก็ยังต้องพากลับไปที่แอปหรือโฟลเดอร์ได้
             let app = self.openRoute(focus: "", path: "/tmp", pids: mine, sessionID: "")
-            let plain = self.openRoute(focus: "", path: "/tmp", pids: [], sessionID: "")
+            // ไม่มีอะไรเจาะจงเลย ยังต้องพากลับไปที่แอปหรือโฟลเดอร์ได้เสมอ
+            // (ได้ focusApp เมื่อแอป Claude เปิดอยู่บนเครื่องที่รันเทสต์)
+            let plainRoute = self.openRoute(focus: "", path: "/tmp", pids: [], sessionID: "")
+            let plain = plainRoute == .folder || plainRoute == .focusApp
+
+            // จับคู่แถวใน sidebar: ชื่อซ้ำกันได้ ต้องเลือกอันที่อยู่ใต้โฟลเดอร์ของงานนั้น
+            let labels = ["Show sidebar",
+                          "cha-landing", "New session in cha-landing",
+                          "Idle แก้บั๊ก", "Idle งานอื่น",
+                          "pixel-cat", "New session in pixel-cat",
+                          "Idle แก้บั๊ก", "Idle เสียงน้อง"]
+            let picked = ClaudeSidebar.rowIndex(labels: labels, project: "pixel-cat",
+                                                topic: "แก้บั๊ก")
+            // ไม่มีในโฟลเดอร์นั้นก็ยอมใช้ที่อื่น ดีกว่ากดแล้วไม่ไปไหน
+            let elsewhere = ClaudeSidebar.rowIndex(labels: labels, project: "ไม่มีโฟลเดอร์นี้",
+                                                   topic: "เสียงน้อง")
+            // หัวข้อโฟลเดอร์กับปุ่มสร้างห้องใหม่ ต้องไม่ถูกนับเป็นแถวห้อง
+            let notHeader = ClaudeSidebar.rowIndex(labels: labels, project: "",
+                                                   topic: "pixel-cat") == nil
+            let noTopic = ClaudeSidebar.rowIndex(labels: labels, project: "pixel-cat",
+                                                  topic: "  ") == nil
+            let rows = picked == 7 && elsewhere == 8 && notHeader && noTopic
             // แอปปิดลิงก์ห้องไว้ ต้องเลิกยิงลิงก์แล้วดึงแอปขึ้นหน้าแทน ไม่ใช่กดแล้วเงียบ
             self.claudeSessionLinkBlocked = true
             let blocked = self.openRoute(focus: "", path: "/tmp", pids: mine, sessionID: sid)
             self.claudeSessionLinkBlocked = false
             let ok = claude == .sessionLink && continues && blocked == .focusApp
-                && warp == .deepLink && app == .focusApp && plain == .folder
+                && warp == .deepLink && app == .focusApp && plain && rows
             FileHandle.standardError.write(
                 ("SIM OPEN ROUTE claude=\(claude.rawValue) continue=\(continues) "
                 + "blocked=\(blocked.rawValue) warp=\(warp.rawValue) "
-                + "app=\(app.rawValue) plain=\(plain.rawValue)\n")
+                + "app=\(app.rawValue) plain=\(plain) rows=\(rows)\n")
                     .data(using: .utf8)!
             )
             NSApp.terminate(nil)
@@ -3248,7 +3270,7 @@ final class PetController: NSObject {
             entry.representedObject = [session.focusURL, session.cwd,
                                        session.appPIDs.map(String.init).joined(separator: ","),
                                        resumeID(session.sessionID), session.source, session.id,
-                                       isSessionAlive(session) ? "alive" : "gone"]
+                                       session.topic, session.name]
             entry.isEnabled = canJump
                 || (!session.cwd.isEmpty && FileManager.default.fileExists(atPath: session.cwd))
             if canJump { entry.title = "↩︎ " + title }
@@ -3303,12 +3325,6 @@ final class PetController: NSObject {
     /// แอป GUI ตัวแรกในสายโปรเซส — .app ตัวแรกที่เจออาจเป็นโปรเซสลูกที่สั่งไม่ได้
     /// (เช่น claude helper ของแอปเดสก์ท็อป) เลยต้องไล่ทั้งสายและเช็ค activationPolicy
     /// session id ที่ปลอดภัยพอจะใส่ลง URL — รับเฉพาะรูปแบบ UUID (ตัวอักษร ตัวเลข ขีด)
-    /// ห้องนั้นยังเปิดอยู่จริงไหม ดูจากโปรเซสที่ hook บันทึกไว้
-    private func isSessionAlive(_ session: WorkSession) -> Bool {
-        guard session.pid > 0 else { return false }
-        return kill(pid_t(session.pid), 0) == 0 || errno != ESRCH
-    }
-
     private func resumeID(_ raw: String) -> String {
         guard raw.count >= 8, raw.count <= 64 else { return "" }
         let ok = CharacterSet(charactersIn: "abcdefABCDEF0123456789-")
@@ -3320,13 +3336,16 @@ final class PetController: NSObject {
             guard let a = NSRunningApplication(processIdentifier: pid_t(p)) else { continue }
             if a.activationPolicy == .regular { return a }
         }
-        return nil
+        // pid ที่ hook จดไว้ค้างทันทีที่แอปถูกเปิดใหม่ ถ้าหาไม่เจอก็ยังต้องมีแอปให้ดึงขึ้นมา
+        return ClaudeSidebar.runningApp()
     }
 
     @objc private func openWorkSession(_ sender: NSMenuItem) {
         guard let parts = sender.representedObject as? [String], parts.count >= 4 else { return }
         if parts.count >= 6 { acknowledgeWork(source: parts[4], id: parts[5]) }
-        openTarget(focus: parts[0], path: parts[1], pidList: parts[2], sessionID: parts[3])
+        openTarget(focus: parts[0], path: parts[1], pidList: parts[2], sessionID: parts[3],
+                   topic: parts.count >= 8 ? parts[6] : "",
+                   project: parts.count >= 8 ? parts[7] : "")
     }
 
     private func openTarget(_ session: WorkSession) {
@@ -3339,7 +3358,8 @@ final class PetController: NSObject {
         }
         openTarget(focus: session.focusURL, path: session.cwd,
                    pidList: session.appPIDs.map(String.init).joined(separator: ","),
-                   sessionID: resumeID(session.sessionID))
+                   sessionID: resumeID(session.sessionID),
+                   topic: session.topic, project: session.name)
     }
 
     /// หาหน้าต่างของแอปที่เป็นเจ้าของงาน โดยอ่านเฉพาะ bounds/PID จาก Window Server
@@ -3823,7 +3843,7 @@ final class PetController: NSObject {
     }
 
     /// ทางที่จะพากลับไปหางาน เรียงตามความเจาะจง แยกออกมาเป็นค่าเดียวเพื่อตรวจได้
-    enum OpenRoute: String { case deepLink, sessionLink, focusApp, folder, none }
+    enum OpenRoute: String { case deepLink, sessionLink, sidebarRow, focusApp, folder, none }
 
     /// ลิงก์ที่พาไปห้องเดิมในแอป Claude ไม่ใช่เปิดห้องใหม่
     ///
@@ -3855,7 +3875,7 @@ final class PetController: NSObject {
         return String(data: data, encoding: .utf8) ?? ""
     }
 
-    private func verifyClaudeSessionLink(pids: [Int]) {
+    private func verifyClaudeSessionLink(pids: [Int], topic: String, project: String) {
         let before = claudeLogTail().count
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
             guard let self else { return }
@@ -3864,24 +3884,40 @@ final class PetController: NSObject {
                     || added.contains("code entry link invalid")
                     || added.contains("unrecognized code path") else { return }
             self.claudeSessionLinkBlocked = true
+            self.requestAccessibilityOnce()
+            if ClaudeSidebar.focusSession(topic: topic, project: project) { return }
             if let app = self.focusableApp(pids) { app.activate() }
         }
     }
 
+    /// ขอสิทธิ์ Accessibility ครั้งเดียว เพราะการกดแถวแทนพ่อต้องใช้สิทธิ์นี้
+    private func requestAccessibilityOnce() {
+        guard !askedForAccessibility, !AXIsProcessTrusted() else { return }
+        askedForAccessibility = true
+        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue()
+        _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
+        say("ขอสิทธิ์ช่วยเหลือการเข้าถึงให้น้องหน่อยนะคะ น้องจะได้กดเปิดห้องที่พ่อสั่งได้",
+            for: 10.0)
+    }
+
     private func openRoute(focus: String, path: String, pids: [Int],
-                           sessionID: String) -> OpenRoute {
+                           sessionID: String, topic: String = "") -> OpenRoute {
         if (focus.hasPrefix("warp://") || focus.hasPrefix("codex://")), URL(string: focus) != nil {
             return .deepLink
         }
         if !claudeSessionLinkBlocked, claudeSessionURL(sessionID) != nil { return .sessionLink }
+        // ลิงก์ถูกปิด แต่ยังกดแถวใน sidebar ให้ได้ ถ้ารู้ว่าเป็นห้องไหนของโปรเจกต์ไหน
+        if claudeSessionLinkBlocked, !topic.isEmpty, AXIsProcessTrusted() { return .sidebarRow }
         if focusableApp(pids) != nil { return .focusApp }
         if !path.isEmpty, FileManager.default.fileExists(atPath: path) { return .folder }
         return .none
     }
 
-    private func openTarget(focus: String, path: String, pidList: String, sessionID: String) {
+    private func openTarget(focus: String, path: String, pidList: String, sessionID: String,
+                            topic: String = "", project: String = "") {
         let pids = pidList.split(separator: ",").compactMap { Int($0) }
-        switch openRoute(focus: focus, path: path, pids: pids, sessionID: sessionID) {
+        switch openRoute(focus: focus, path: path, pids: pids, sessionID: sessionID,
+                         topic: topic) {
         case .deepLink:
             // deep link ที่เจาะจงแท็บ — Warp สำหรับ Claude Code, codex:// สำหรับ Codex
             if let u = URL(string: focus), NSWorkspace.shared.open(u) { return }
@@ -3889,9 +3925,11 @@ final class PetController: NSObject {
             if let u = claudeSessionURL(sessionID), NSWorkspace.shared.open(u) {
                 // ลิงก์ห้องอาจถูกปิดไว้ฝั่งแอป แล้วเงียบไปเฉย ๆ ไม่พาไปไหน
                 // ถ้าเจอว่าถูกปิด ก็ดึงแอปขึ้นหน้าให้แทน จะได้ไม่กดแล้วไม่มีอะไรเกิดขึ้น
-                verifyClaudeSessionLink(pids: pids)
+                verifyClaudeSessionLink(pids: pids, topic: topic, project: project)
                 return
             }
+        case .sidebarRow:
+            if ClaudeSidebar.focusSession(topic: topic, project: project) { return }
         case .focusApp, .folder, .none:
             break
         }
