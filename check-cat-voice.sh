@@ -1,5 +1,5 @@
 #!/bin/zsh
-# เสียงเหมียว: ถอด WAV ที่ฝังไว้ได้ครบ, กันเสียงรัว, ปิดได้ และเงียบเองตอนโฟกัส
+# เสียงเหมียว: ถอด WAV ที่ฝังไว้ได้ครบ, กันเสียงรัว, ดังเบา ๆ ตอน AI ทำงานเสร็จ, ปิดได้ และเงียบเองตอนโฟกัส
 set -u
 set -e
 
@@ -25,10 +25,10 @@ if (( STATUS != 0 )); then
     exit 1
 fi
 
-rg -q 'SIM VOICE assets=true play=true throttle=true mute=true off=true log=true focus=true' "$LOG" || {
+rg -q 'SIM VOICE assets=true play=true throttle=true mute=true off=true log=true focus=true done=true' "$LOG" || {
     print -u2 "FAIL: cat voice assets, throttling, mute or focus behavior is wrong"
     cat "$LOG" >&2
     exit 1
 }
 
-print "PASS: cat voice plays, throttles, respects the menu toggle, and goes quiet in focus"
+print "PASS: cat voice plays, throttles, chimes once when AI work finishes, respects the menu toggle, and goes quiet in focus"

@@ -48,8 +48,10 @@ final class CatVoice {
     /// - Parameters:
     ///   - minGap: เว้นระยะจากเสียงเดียวกันครั้งก่อน กันเสียงรัวตอนขยับถี่ ๆ
     ///   - gapAny: เว้นระยะจากเสียงใดก็ได้ครั้งก่อน กันเสียงซ้อนกันหลายเหตุการณ์
+    ///   - volumeScale: หรี่ลงจากระดับปกติ สำหรับเสียงแจ้งเตือนที่ควรเบากว่าเสียงเล่น
     @discardableResult
-    func play(_ kind: CatSound, minGap: Double = 2.5, gapAny: Double = 0.6) -> Bool {
+    func play(_ kind: CatSound, minGap: Double = 2.5, gapAny: Double = 0.6,
+              volumeScale: Float = 1.0) -> Bool {
         guard enabled, !muted else { return false }
         let now = Date()
         guard now.timeIntervalSince(lastPlayedAt[kind] ?? .distantPast) >= minGap,
@@ -61,10 +63,17 @@ final class CatVoice {
             return true
         }
         guard let s = sound(kind) else { return false }
-        s.volume = volume
+        s.volume = volume * max(0, min(1, volumeScale))
         if s.isPlaying { s.stop() }
         s.play()
         return true
+    }
+
+    /// ล้างจังหวะที่เว้นไว้ ใช้ตอนจำลองเพื่อตรวจเหตุการณ์ถัดไปโดยไม่ต้องรอเวลาจริง
+    func resetThrottleForTests() {
+        lastPlayedAt.removeAll()
+        lastAnyAt = .distantPast
+        playLog.removeAll()
     }
 
     /// ให้เสียงเงียบทันทีตอนสั่งปิดหรือเข้าโฟกัส ไม่ค้างเสียงที่เล่นอยู่

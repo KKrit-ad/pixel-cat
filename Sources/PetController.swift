@@ -366,12 +366,23 @@ final class PetController: NSObject {
             self.tickForTests(0.016)
             let focusRestores = !voice.muted
 
+            // งาน AI เสร็จต้องมีเสียงเบา ๆ หนึ่งครั้ง และงานถัดไปที่เสร็จไล่กันต้องไม่ดังซ้ำ
+            voice.resetThrottleForTests()
+            self.playWorkEmotion(.done)
+            let doneChimed = voice.playLog == ["trill"]
+            self.playWorkEmotion(.batchDone)
+            let doneQuietRepeat = voice.playLog == ["trill"]
+            self.playWorkEmotion(.input)
+            self.playWorkEmotion(.failed)
+            let waitingSilent = voice.playLog == ["trill"]
+            let doneVoice = doneChimed && doneQuietRepeat && waitingSilent
+
             let ok = assets && first && throttled && other && mutedQuiet
-                && offQuiet && log && focusMutes && focusRestores
+                && offQuiet && log && focusMutes && focusRestores && doneVoice
             FileHandle.standardError.write(
                 ("SIM VOICE assets=\(assets) play=\(first) throttle=\(throttled && other) "
                 + "mute=\(mutedQuiet) off=\(offQuiet) log=\(log) "
-                + "focus=\(focusMutes && focusRestores)\n").data(using: .utf8)!
+                + "focus=\(focusMutes && focusRestores) done=\(doneVoice)\n").data(using: .utf8)!
             )
             NSApp.terminate(nil)
             if !ok { exit(2) }
@@ -3956,6 +3967,11 @@ final class PetController: NSObject {
         let level = effectiveMotionLevel
         switch kind {
         case .done, .batchDone, .returned:
+            // เสียงบอกว่า AI ทำงานเสร็จ: ครืดสั้น ๆ เบากว่าเสียงเล่นครึ่งหนึ่ง
+            // และเว้นจังหวะยาว งานหลายตัวเสร็จไล่กันก็ได้ยินครั้งเดียว
+            if kind != .returned {
+                CatVoice.shared.play(.trill, minGap: 20.0, gapAny: 1.5, volumeScale: 0.5)
+            }
             // สงบ=ยืดแล้วนั่ง, ปกติ/ซน=เด้งหนึ่งครั้ง; ไม่มีโหมดไหนสั่นวน
             let s = max(0.7, scale * 0.85)
             let isBatch = kind == .batchDone
