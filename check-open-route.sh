@@ -16,7 +16,7 @@ if (( STATUS != 0 )); then
     exit 1
 fi
 
-rg -q 'SIM OPEN ROUTE claude=sessionLink continue=true blocked=focusApp warp=deepLink app=focusApp plain=true rows=true' "$LOG" || {
+rg -q 'SIM OPEN ROUTE claude=sessionLink continue=true blocked=focusApp warp=deepLink app=focusApp plain=true rows=true arrives=true' "$LOG" || {
     print -u2 "FAIL: wrong route back to a task"
     cat "$LOG" >&2
     exit 1

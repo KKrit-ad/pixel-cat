@@ -433,6 +433,14 @@ final class PetController: NSObject {
             let plainRoute = self.openRoute(focus: "", path: "/tmp", pids: [], sessionID: "")
             let plain = plainRoute == .folder || plainRoute == .focusApp
 
+            // ลิงก์ห้องถูกปิด และยังไม่ได้สิทธิ์ Accessibility ก็ต้องยังไปถึงห้องนั้นได้
+            // ด้วย resume — ยอมมีห้องซ้ำ ดีกว่ากดแล้วไม่ไปไหน
+            let noPermission = self.fallbackRoute(pids: [], path: "", sessionID: sid, topic: "")
+            let withPermission = self.fallbackRoute(pids: [], path: "", sessionID: sid,
+                                                    topic: "งานเดโม")
+            let alwaysArrives = noPermission == .resume
+                && (withPermission == .sidebarRow || !AXIsProcessTrusted())
+
             // จับคู่แถวใน sidebar: ชื่อซ้ำกันได้ ต้องเลือกอันที่อยู่ใต้โฟลเดอร์ของงานนั้น
             let labels = ["Show sidebar",
                           "cha-landing", "New session in cha-landing",
@@ -455,11 +463,12 @@ final class PetController: NSObject {
             let blocked = self.openRoute(focus: "", path: "/tmp", pids: mine, sessionID: sid)
             self.claudeSessionLinkBlocked = false
             let ok = claude == .sessionLink && continues && blocked == .focusApp
-                && warp == .deepLink && app == .focusApp && plain && rows
+                && warp == .deepLink && app == .focusApp && plain && rows && alwaysArrives
             FileHandle.standardError.write(
                 ("SIM OPEN ROUTE claude=\(claude.rawValue) continue=\(continues) "
                 + "blocked=\(blocked.rawValue) warp=\(warp.rawValue) "
-                + "app=\(app.rawValue) plain=\(plain) rows=\(rows)\n")
+                + "app=\(app.rawValue) plain=\(plain) rows=\(rows) "
+                + "arrives=\(alwaysArrives)\n")
                     .data(using: .utf8)!
             )
             NSApp.terminate(nil)
@@ -3843,7 +3852,9 @@ final class PetController: NSObject {
     }
 
     /// ทางที่จะพากลับไปหางาน เรียงตามความเจาะจง แยกออกมาเป็นค่าเดียวเพื่อตรวจได้
-    enum OpenRoute: String { case deepLink, sessionLink, sidebarRow, focusApp, folder, none }
+    enum OpenRoute: String {
+        case deepLink, sessionLink, sidebarRow, resume, focusApp, folder, none
+    }
 
     /// ลิงก์ที่พาไปห้องเดิมในแอป Claude ไม่ใช่เปิดห้องใหม่
     ///
@@ -3875,7 +3886,8 @@ final class PetController: NSObject {
         return String(data: data, encoding: .utf8) ?? ""
     }
 
-    private func verifyClaudeSessionLink(pids: [Int], topic: String, project: String) {
+    private func verifyClaudeSessionLink(pids: [Int], path: String, sessionID: String,
+                                         topic: String, project: String) {
         let before = claudeLogTail().count
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
             guard let self else { return }
@@ -3885,8 +3897,8 @@ final class PetController: NSObject {
                     || added.contains("unrecognized code path") else { return }
             self.claudeSessionLinkBlocked = true
             self.requestAccessibilityOnce()
-            if ClaudeSidebar.focusSession(topic: topic, project: project) { return }
-            if let app = self.focusableApp(pids) { app.activate() }
+            self.openTargetFallback(pids: pids, path: path, sessionID: sessionID,
+                                    topic: topic, project: project)
         }
     }
 
@@ -3925,13 +3937,44 @@ final class PetController: NSObject {
             if let u = claudeSessionURL(sessionID), NSWorkspace.shared.open(u) {
                 // ลิงก์ห้องอาจถูกปิดไว้ฝั่งแอป แล้วเงียบไปเฉย ๆ ไม่พาไปไหน
                 // ถ้าเจอว่าถูกปิด ก็ดึงแอปขึ้นหน้าให้แทน จะได้ไม่กดแล้วไม่มีอะไรเกิดขึ้น
-                verifyClaudeSessionLink(pids: pids, topic: topic, project: project)
+                verifyClaudeSessionLink(pids: pids, path: path, sessionID: sessionID,
+                                        topic: topic, project: project)
                 return
             }
-        case .sidebarRow:
-            if ClaudeSidebar.focusSession(topic: topic, project: project) { return }
-        case .focusApp, .folder, .none:
+        case .sidebarRow, .resume, .focusApp, .folder, .none:
             break
+        }
+        openTargetFallback(pids: pids, path: path, sessionID: sessionID,
+                           topic: topic, project: project)
+    }
+
+    /// ทางถอยเมื่อลิงก์ที่ถูกต้องใช้ไม่ได้ ไล่จากเจาะจงที่สุดลงมา
+    /// กติกาเดียวคือกดแล้วต้องมีอะไรเกิดขึ้นเสมอ ไม่ปล่อยให้เงียบ
+    /// ทางถอยที่จะเลือก แยกออกมาเป็นค่าเดียวเพื่อตรวจได้ว่าไม่มีช่องไหนจบลงที่ "ไม่ทำอะไร"
+    private func fallbackRoute(pids: [Int], path: String, sessionID: String,
+                               topic: String) -> OpenRoute {
+        if !topic.isEmpty, AXIsProcessTrusted() { return .sidebarRow }
+        if !sessionID.isEmpty { return .resume }
+        if focusableApp(pids) != nil { return .focusApp }
+        if !path.isEmpty, FileManager.default.fileExists(atPath: path) { return .folder }
+        return .none
+    }
+
+    private func openTargetFallback(pids: [Int], path: String, sessionID: String,
+                                    topic: String, project: String) {
+        switch fallbackRoute(pids: pids, path: path, sessionID: sessionID, topic: topic) {
+        case .sidebarRow:
+            // กดแถวใน sidebar — ไปถึงห้องเดิมโดยไม่มีห้องซ้ำ ต้องได้สิทธิ์ Accessibility ก่อน
+            if ClaudeSidebar.focusSession(topic: topic, project: project) { return }
+        case .resume, .deepLink, .sessionLink, .focusApp, .folder, .none:
+            break
+        }
+        // resume ไปถึงห้องนั้นได้จริงเสมอ แลกกับห้องซ้ำหนึ่งอันในรายการ
+        // ยอมรับข้อเสียนี้ดีกว่ากดแล้วไม่ไปไหนเลย
+        if !sessionID.isEmpty, var c = URLComponents(string: "claude://resume") {
+            c.queryItems = [URLQueryItem(name: "session", value: sessionID),
+                            URLQueryItem(name: "source", value: "pixelcat")]
+            if let u = c.url, NSWorkspace.shared.open(u) { return }
         }
         if let app = focusableApp(pids) { app.activate(); return }
         guard !path.isEmpty, FileManager.default.fileExists(atPath: path) else { return }
