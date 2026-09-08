@@ -1,0 +1,15 @@
+# ไบนารีที่ build ได้ใหม่เสมอ
+PixelCat
+PixelCat.app/Contents/MacOS/PixelCat
+PixelCat.app/Contents/_CodeSignature/
+
+# ของชั่วคราว
+.DS_Store
+*.b64
+/tmp/
+
+# ไฟล์สำรองแบบเก่า (ตอนนี้ใช้ git แทนแล้ว)
+*.backup-*
+*.replaced-*
+*.before-*
+*.pre-*

@@ -1,0 +1,18 @@
+let POSES: [String: Pose] = [
+    "walk":        Pose(start: 0, count: 4, fps: 9.0),
+    "walkBlink":   Pose(start: 4, count: 4, fps: 9.0),
+    "run":         Pose(start: 8, count: 4, fps: 12.0),
+    "runBlink":    Pose(start: 12, count: 4, fps: 12.0),
+    "sit":         Pose(start: 16, count: 4, fps: 2.2),
+    "sitBlink":    Pose(start: 20, count: 4, fps: 2.2),
+    "tilt":        Pose(start: 24, count: 2, fps: 1.6),
+    "lick":        Pose(start: 26, count: 2, fps: 2.5),
+    "sleep":       Pose(start: 28, count: 2, fps: 1.0),
+    "stretch":     Pose(start: 30, count: 2, fps: 2.0),
+    "crouch":      Pose(start: 32, count: 2, fps: 4.0),
+    "climb":       Pose(start: 34, count: 2, fps: 4.5),
+    "held":        Pose(start: 36, count: 2, fps: 3.0),
+    "ball":        Pose(start: 38, count: 4, fps: 8.0),
+    "gecko":       Pose(start: 42, count: 2, fps: 7.0),
+    "jump":        Pose(start: 44, count: 1, fps: 1.0)
+]
