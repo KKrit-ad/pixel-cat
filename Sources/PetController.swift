@@ -415,21 +415,23 @@ final class PetController: NSObject {
                 .first { $0.activationPolicy == .regular }
                 .map { [Int($0.processIdentifier)] } ?? []
             let sid = "0a1b2c3d-4e5f-6789-abcd-ef0123456789"
-            let alive = self.openRoute(focus: "", path: "/tmp", pids: mine,
-                                       sessionID: sid, sessionAlive: true)
-            let gone = self.openRoute(focus: "", path: "/tmp", pids: mine,
-                                      sessionID: sid, sessionAlive: false)
+            let claude = self.openRoute(focus: "", path: "/tmp", pids: mine, sessionID: sid)
+            // ต้องเป็นลิงก์ที่ไปห้องเดิม ไม่ใช่ resume ที่สร้างห้องใหม่จาก transcript
+            let link = self.claudeSessionURL(sid)
+            let continues = link?.host == "code" && link?.path == "/continue"
+                && link?.absoluteString.contains("session=\(sid)") == true
             // deep link ที่เจาะจงแท็บอยู่แล้ว ยังต้องชนะทุกกรณี
             let warp = self.openRoute(focus: "warp://session/abc", path: "/tmp", pids: mine,
-                                      sessionID: sid, sessionAlive: true)
-            // ห้องตายและไม่มี session id ก็ยังต้องพากลับไปที่โฟลเดอร์ได้
-            let plain = self.openRoute(focus: "", path: "/tmp", pids: [],
-                                       sessionID: "", sessionAlive: false)
-            let ok = alive == .focusApp && gone == .resume
-                && warp == .deepLink && plain == .folder
+                                      sessionID: sid)
+            // ไม่มี session id ก็ยังต้องพากลับไปที่แอปหรือโฟลเดอร์ได้
+            let app = self.openRoute(focus: "", path: "/tmp", pids: mine, sessionID: "")
+            let plain = self.openRoute(focus: "", path: "/tmp", pids: [], sessionID: "")
+            let ok = claude == .sessionLink && continues
+                && warp == .deepLink && app == .focusApp && plain == .folder
             FileHandle.standardError.write(
-                ("SIM OPEN ROUTE alive=\(alive.rawValue) gone=\(gone.rawValue) "
-                + "warp=\(warp.rawValue) plain=\(plain.rawValue)\n").data(using: .utf8)!
+                ("SIM OPEN ROUTE claude=\(claude.rawValue) continue=\(continues) "
+                + "warp=\(warp.rawValue) app=\(app.rawValue) plain=\(plain.rawValue)\n")
+                    .data(using: .utf8)!
             )
             NSApp.terminate(nil)
             if !ok { exit(2) }
@@ -3317,8 +3319,7 @@ final class PetController: NSObject {
     @objc private func openWorkSession(_ sender: NSMenuItem) {
         guard let parts = sender.representedObject as? [String], parts.count >= 4 else { return }
         if parts.count >= 6 { acknowledgeWork(source: parts[4], id: parts[5]) }
-        openTarget(focus: parts[0], path: parts[1], pidList: parts[2], sessionID: parts[3],
-                   sessionAlive: parts.count >= 7 && parts[6] == "alive")
+        openTarget(focus: parts[0], path: parts[1], pidList: parts[2], sessionID: parts[3])
     }
 
     private func openTarget(_ session: WorkSession) {
@@ -3331,8 +3332,7 @@ final class PetController: NSObject {
         }
         openTarget(focus: session.focusURL, path: session.cwd,
                    pidList: session.appPIDs.map(String.init).joined(separator: ","),
-                   sessionID: resumeID(session.sessionID),
-                   sessionAlive: isSessionAlive(session))
+                   sessionID: resumeID(session.sessionID))
     }
 
     /// หาหน้าต่างของแอปที่เป็นเจ้าของงาน โดยอ่านเฉพาะ bounds/PID จาก Window Server
@@ -3466,11 +3466,9 @@ final class PetController: NSObject {
         let sourceLink: String
         if !session.focusURL.isEmpty {
             sourceLink = session.focusURL
-        } else if session.source == "claude", !resumeID(session.sessionID).isEmpty,
-                  var resume = URLComponents(string: "claude://resume") {
-            resume.queryItems = [URLQueryItem(name: "session", value: resumeID(session.sessionID)),
-                                 URLQueryItem(name: "source", value: "pixelcat-rescue")]
-            sourceLink = resume.url?.absoluteString ?? "(ไม่มี deep link ของ task ต้นทาง)"
+        } else if session.source == "claude",
+                  let link = claudeSessionURL(resumeID(session.sessionID)) {
+            sourceLink = link.absoluteString
         } else {
             sourceLink = "(ไม่มี deep link ของ task ต้นทาง)"
         }
@@ -3818,41 +3816,42 @@ final class PetController: NSObject {
     }
 
     /// ทางที่จะพากลับไปหางาน เรียงตามความเจาะจง แยกออกมาเป็นค่าเดียวเพื่อตรวจได้
-    enum OpenRoute: String { case deepLink, focusApp, resume, folder, none }
+    enum OpenRoute: String { case deepLink, sessionLink, focusApp, folder, none }
 
-    /// resume ของ Claude คือ "เปิดห้องใหม่จาก transcript เดิม" ไม่ใช่ "กลับไปห้องที่เปิดอยู่"
-    /// ห้องไหนโปรเซสยังอยู่จึงต้องสลับไปหาแอปแทน ไม่งั้นได้ห้องซ้ำชื่อเดิมเพิ่มมาอีกอัน
+    /// ลิงก์ที่พาไปห้องเดิมในแอป Claude ไม่ใช่เปิดห้องใหม่
+    ///
+    /// claude://resume สร้างห้องใหม่จาก transcript เดิม พอห้องนั้นยังเปิดอยู่
+    /// จะได้ห้องชื่อซ้ำเพิ่มมาอีกอัน ส่วน claude://code/continue จะไปหาห้องที่มีอยู่
+    /// ในรายการของแอปแล้วเปลี่ยนหน้าไปที่ห้องนั้นตรง ๆ ใช้ได้ทั้งห้องที่เปิดและปิดอยู่
+    private func claudeSessionURL(_ sessionID: String) -> URL? {
+        guard !sessionID.isEmpty, var c = URLComponents(string: "claude://code/continue") else {
+            return nil
+        }
+        c.queryItems = [URLQueryItem(name: "session", value: sessionID),
+                        URLQueryItem(name: "source", value: "pixelcat")]
+        return c.url
+    }
+
     private func openRoute(focus: String, path: String, pids: [Int],
-                           sessionID: String, sessionAlive: Bool) -> OpenRoute {
+                           sessionID: String) -> OpenRoute {
         if (focus.hasPrefix("warp://") || focus.hasPrefix("codex://")), URL(string: focus) != nil {
             return .deepLink
         }
-        if sessionAlive, focusableApp(pids) != nil { return .focusApp }
-        if !sessionID.isEmpty { return .resume }
+        if claudeSessionURL(sessionID) != nil { return .sessionLink }
         if focusableApp(pids) != nil { return .focusApp }
         if !path.isEmpty, FileManager.default.fileExists(atPath: path) { return .folder }
         return .none
     }
 
-    private func openTarget(focus: String, path: String, pidList: String,
-                            sessionID: String, sessionAlive: Bool = false) {
+    private func openTarget(focus: String, path: String, pidList: String, sessionID: String) {
         let pids = pidList.split(separator: ",").compactMap { Int($0) }
-        switch openRoute(focus: focus, path: path, pids: pids,
-                         sessionID: sessionID, sessionAlive: sessionAlive) {
+        switch openRoute(focus: focus, path: path, pids: pids, sessionID: sessionID) {
         case .deepLink:
             // deep link ที่เจาะจงแท็บ — Warp สำหรับ Claude Code, codex:// สำหรับ Codex
             if let u = URL(string: focus), NSWorkspace.shared.open(u) { return }
-        case .focusApp:
-            // ห้องยังเปิดอยู่ สลับไปหาแอปที่รันมันพอ ไม่ต้อง resume ให้ได้ห้องซ้ำ
-            if let app = focusableApp(pids) { app.activate(); return }
-        case .resume:
-            // ห้องปิดไปแล้ว ค่อยให้ Claude Code เปิดห้องจาก transcript เดิม
-            if var c = URLComponents(string: "claude://resume") {
-                c.queryItems = [URLQueryItem(name: "session", value: sessionID),
-                                URLQueryItem(name: "source", value: "pixelcat")]
-                if let u = c.url, NSWorkspace.shared.open(u) { return }
-            }
-        case .folder, .none:
+        case .sessionLink:
+            if let u = claudeSessionURL(sessionID), NSWorkspace.shared.open(u) { return }
+        case .focusApp, .folder, .none:
             break
         }
         if let app = focusableApp(pids) { app.activate(); return }

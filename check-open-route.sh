@@ -1,5 +1,5 @@
 #!/bin/zsh
-# กดเปิดงานที่ยังเปิดอยู่ ต้องสลับไปหาห้องเดิม ไม่ใช่ resume จนได้ห้องซ้ำ
+# กดเปิดงาน ต้องไปห้องเดิมใน Claude (code/continue) ไม่ใช่ resume ที่สร้างห้องใหม่
 set -u
 set -e
 
@@ -16,10 +16,10 @@ if (( STATUS != 0 )); then
     exit 1
 fi
 
-rg -q 'SIM OPEN ROUTE alive=focusApp gone=resume warp=deepLink plain=folder' "$LOG" || {
+rg -q 'SIM OPEN ROUTE claude=sessionLink continue=true warp=deepLink app=focusApp plain=folder' "$LOG" || {
     print -u2 "FAIL: wrong route back to a task"
     cat "$LOG" >&2
     exit 1
 }
 
-print "PASS: live rooms get focused, closed rooms resume, tab deep links still win"
+print "PASS: Claude tasks open the existing room, tab deep links still win, and fallbacks stay"
