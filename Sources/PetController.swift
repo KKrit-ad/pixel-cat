@@ -329,6 +329,55 @@ final class PetController: NSObject {
         syncMenu()
         applyFrame()
 
+        if ProcessInfo.processInfo.environment["PIXELCAT_SIMVOICE"] != nil {
+            let voice = CatVoice.shared
+            // ครบทุกเสียงและถอด base64 ออกมาเป็น WAV ได้จริง
+            var decoded = 0
+            for kind in CatSound.allCases {
+                guard let b64 = CAT_VOICE_WAV[kind.rawValue],
+                      let data = Data(base64Encoded: b64),
+                      data.count > 2000,
+                      data.prefix(4) == Data("RIFF".utf8),
+                      data.dropFirst(8).prefix(4) == Data("WAVE".utf8) else { continue }
+                decoded += 1
+            }
+            let assets = decoded == CatSound.allCases.count
+
+            voice.enabled = true
+            voice.muted = false
+            let first = voice.play(.mew, minGap: 5.0)
+            let throttled = !voice.play(.mew, minGap: 5.0)        // เสียงเดิมรัว ๆ ต้องถูกกัน
+            let other = !voice.play(.trill, minGap: 0, gapAny: 0.6) // เสียงอื่นก็ต้องเว้นจังหวะ
+            voice.muted = true
+            let mutedQuiet = !voice.play(.purr, minGap: 0, gapAny: 0)
+            voice.muted = false
+            voice.enabled = false
+            let offQuiet = !voice.play(.purr, minGap: 0, gapAny: 0)
+            voice.enabled = true
+            let log = voice.playLog == ["mew"]
+
+            // เปิดโฟกัสแล้วต้องเงียบเองโดยไม่ต้องสั่ง
+            self.focusPhase = .focus
+            self.focusRemaining = 100
+            self.tickForTests(0.016)
+            let focusMutes = voice.muted
+            self.focusPhase = .idle
+            self.focusRemaining = 0
+            self.tickForTests(0.016)
+            let focusRestores = !voice.muted
+
+            let ok = assets && first && throttled && other && mutedQuiet
+                && offQuiet && log && focusMutes && focusRestores
+            FileHandle.standardError.write(
+                ("SIM VOICE assets=\(assets) play=\(first) throttle=\(throttled && other) "
+                + "mute=\(mutedQuiet) off=\(offQuiet) log=\(log) "
+                + "focus=\(focusMutes && focusRestores)\n").data(using: .utf8)!
+            )
+            NSApp.terminate(nil)
+            if !ok { exit(2) }
+            return
+        }
+
         if ProcessInfo.processInfo.environment["PIXELCAT_SIMFILEFINDER"] != nil {
             let fm = FileManager.default
             let root = fm.temporaryDirectory.appendingPathComponent(
@@ -2349,6 +2398,9 @@ final class PetController: NSObject {
         m.addItem(f)
         let sp = item("พูดได้", #selector(toggleSpeech)); sp.state = speechOn ? .on : .off
         m.addItem(sp)
+        let voice = item("เสียงเหมียว", #selector(toggleVoice))
+        voice.state = CatVoice.shared.enabled ? .on : .off
+        m.addItem(voice)
         let motion = NSMenuItem(title: "ความซน • \(effectiveMotionLevel.label)",
                                 action: nil, keyEquivalent: "")
         motion.submenu = makeMotionMenu()
@@ -2632,6 +2684,7 @@ final class PetController: NSObject {
                 setState(pose, duration: 0.75) { [weak self] in
                     self?.setState("sit", duration: 2.0) { [weak self] in self?.pickIdle() }
                 }
+                CatVoice.shared.play(.trill, minGap: 2.0)
                 let sparkleCount = effectiveMotionLevel == .playful ? 4 : 2
                 for i in 0..<sparkleCount {
                     hearts.append(HeartsView.Heart(x: spriteW * (0.38 + CGFloat(i) * 0.1),
@@ -2976,6 +3029,8 @@ final class PetController: NSObject {
         statusItem.menu?.items.first(where: { $0.tag == 1 })?.state = paused ? .on : .off
         statusItem.menu?.items.first(where: { $0.tag == 2 })?.state = onTop ? .on : .off
         statusItem.menu?.items.first(where: { $0.tag == 3 })?.state = speechOn ? .on : .off
+        statusItem.menu?.items.first(where: { $0.title == "เสียงเหมียว" })?.state =
+            CatVoice.shared.enabled ? .on : .off
         if let sizes = statusItem.menu?.items.first(where: { $0.title == "ขนาด" })?.submenu {
             for mi in sizes.items { mi.state = (CGFloat(mi.tag) / 10 == scale) ? .on : .off }
         }
@@ -4111,12 +4166,25 @@ final class PetController: NSObject {
 
     private var onTop = true
 
+    @objc private func toggleVoice() {
+        CatVoice.shared.enabled.toggle()
+        if CatVoice.shared.enabled {
+            CatVoice.shared.play(.mew, minGap: 0)     // ให้ได้ยินทันทีว่าเปิดแล้วเสียงเป็นยังไง
+        } else {
+            CatVoice.shared.stopAll()
+        }
+        syncMenu()
+    }
+
     @objc private func toggleSpeech() {
         speechOn.toggle()
         UserDefaults.standard.set(speechOn, forKey: "speechOn")
         if speechOn {
             showNextWorkNotice()
-            if activeWorkNotice == nil { say("เหมียว~") }
+            if activeWorkNotice == nil {
+                say("เหมียว~")
+                CatVoice.shared.play(.meow, minGap: 0)
+            }
         } else {
             workNoticeQueue.removeAll()
             activeContextRescue = nil
@@ -4411,6 +4479,7 @@ final class PetController: NSObject {
         purrCount = 0
         setState("sit", duration: 9999)
         say("ครืดๆ", for: 2.2)
+        CatVoice.shared.play(.purr, minGap: 1.0)
     }
 
     func petStroke() {
@@ -4422,6 +4491,7 @@ final class PetController: NSObject {
         purrCount += 1
         if purrCount % 3 == 0 {
             say(["ครืดๆ", "อีกๆ", "ตรงนั้นแหละ", "ครืดดด", "สบายจัง"].randomElement()!, for: 2.0)
+            CatVoice.shared.play(.purr, minGap: 2.0)
         }
     }
 
@@ -4429,6 +4499,7 @@ final class PetController: NSObject {
         guard petting else { return }
         petting = false
         say(["อีกสิ", "หมดแล้วเหรอ", "เอาอีก"].randomElement()!, for: 1.7)
+        CatVoice.shared.play(.mew, minGap: 3.0)
         setState("stretch", duration: 0.8) { [weak self] in self?.pickIdle() }
     }
 
@@ -5028,6 +5099,7 @@ final class PetController: NSObject {
             let hit = abs(NSEvent.mouseLocation.x - (self.x + self.spriteW / 2)) < 70
             self.say(hit ? ["ได้แล้ว!", "ตะปบ!"].randomElement()!
                          : ["พลาด!", "หนีไปได้", "แง"].randomElement()!, for: 1.7)
+            CatVoice.shared.play(hit ? .trill : .mrrp, minGap: 1.5)
             self.transitionState(to: "sit", duration: 2.2)
         }
     }
@@ -5396,7 +5468,12 @@ final class PetController: NSObject {
         // ซ้ำอีกครั้งตรงนี้ (ซึ่งเคยทำให้ไม่รู้ว่างานไหนเสร็จ)
     }
 
+    /// ให้ regression หมุนหนึ่งเฟรมได้ โดยไม่ต้องเปิด tick ทั้งก้อน
+    func tickForTests(_ dt: Double) { tick(dt) }
+
     private func tick(_ dt: Double) {
+        // โฟกัสกับตอนหลับต้องเงียบจริง ๆ ไม่งั้นเสียงน่ารักจะกลายเป็นเสียงกวน
+        CatVoice.shared.muted = focusPhase != .idle || napForced || state == "sleep"
         pollSessions(dt)
         runLocalCompanion(dt)
         updateCompanionThinking(dt)
@@ -5461,6 +5538,7 @@ final class PetController: NSObject {
             else {                                    // หน้าต่างหายไประหว่างไต่ → ร่วง
                 climbing = false; airborne = true; vy = 0; vx = 0
                 say("อ๊ากก", for: 1.4)
+                CatVoice.shared.play(.mrrp, minGap: 1.0)
                 landAction = { [weak self] in self?.setState("stretch", duration: 0.8) { self?.pickIdle() } }
                 setState("jump", duration: 99)
                 return
