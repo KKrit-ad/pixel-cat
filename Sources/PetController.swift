@@ -261,6 +261,8 @@ final class PetController: NSObject {
         return raw.compactMap(SavedRescue.init(dictionary:))
     }()
     private var activeContextRescue: ContextRescue?
+    /// แอปตีลิงก์ห้องกลับมาแล้วอย่างน้อยหนึ่งครั้ง — ครั้งต่อไปดึงแอปขึ้นหน้าเลย ไม่ต้องลองซ้ำ
+    private var claudeSessionLinkBlocked = false
     private var lastSimulatedNewTaskURL = ""
     private var lastSimulatedHandoff = ""
     private var codexContextCache: [String: (modified: Date, size: UInt64, percent: Double)] = [:]
@@ -419,18 +421,23 @@ final class PetController: NSObject {
             // ต้องเป็นลิงก์ที่ไปห้องเดิม ไม่ใช่ resume ที่สร้างห้องใหม่จาก transcript
             let link = self.claudeSessionURL(sid)
             let continues = link?.host == "code" && link?.path == "/continue"
-                && link?.absoluteString.contains("session=\(sid)") == true
+                && link?.absoluteString.contains("session=local_\(sid)") == true
             // deep link ที่เจาะจงแท็บอยู่แล้ว ยังต้องชนะทุกกรณี
             let warp = self.openRoute(focus: "warp://session/abc", path: "/tmp", pids: mine,
                                       sessionID: sid)
             // ไม่มี session id ก็ยังต้องพากลับไปที่แอปหรือโฟลเดอร์ได้
             let app = self.openRoute(focus: "", path: "/tmp", pids: mine, sessionID: "")
             let plain = self.openRoute(focus: "", path: "/tmp", pids: [], sessionID: "")
-            let ok = claude == .sessionLink && continues
+            // แอปปิดลิงก์ห้องไว้ ต้องเลิกยิงลิงก์แล้วดึงแอปขึ้นหน้าแทน ไม่ใช่กดแล้วเงียบ
+            self.claudeSessionLinkBlocked = true
+            let blocked = self.openRoute(focus: "", path: "/tmp", pids: mine, sessionID: sid)
+            self.claudeSessionLinkBlocked = false
+            let ok = claude == .sessionLink && continues && blocked == .focusApp
                 && warp == .deepLink && app == .focusApp && plain == .folder
             FileHandle.standardError.write(
                 ("SIM OPEN ROUTE claude=\(claude.rawValue) continue=\(continues) "
-                + "warp=\(warp.rawValue) app=\(app.rawValue) plain=\(plain.rawValue)\n")
+                + "blocked=\(blocked.rawValue) warp=\(warp.rawValue) "
+                + "app=\(app.rawValue) plain=\(plain.rawValue)\n")
                     .data(using: .utf8)!
             )
             NSApp.terminate(nil)
@@ -3827,9 +3834,38 @@ final class PetController: NSObject {
         guard !sessionID.isEmpty, var c = URLComponents(string: "claude://code/continue") else {
             return nil
         }
-        c.queryItems = [URLQueryItem(name: "session", value: sessionID),
+        // แอปเรียกห้องในเครื่องว่า local_<uuid> ส่ง uuid เปล่าไปจะโดนตีกลับว่า
+        // "code entry link invalid ?session" แล้วเงียบ ไม่พาไปไหนเลย
+        let appID = sessionID.hasPrefix("local_") ? sessionID : "local_" + sessionID
+        c.queryItems = [URLQueryItem(name: "session", value: appID),
                         URLQueryItem(name: "source", value: "pixelcat")]
         return c.url
+    }
+
+    /// ลิงก์ห้องของ Claude ถูกปิดไว้ฝั่งแอปหรือเปล่า รู้ได้จาก log ที่แอปเขียนเองหลังกด
+    private static let claudeLogPath = NSString(string: "~/Library/Logs/Claude/main.log")
+        .expandingTildeInPath
+
+    private func claudeLogTail(_ bytes: Int = 8192) -> String {
+        guard let handle = FileHandle(forReadingAtPath: Self.claudeLogPath) else { return "" }
+        defer { try? handle.close() }
+        guard let size = try? handle.seekToEnd() else { return "" }
+        try? handle.seek(toOffset: size > UInt64(bytes) ? size - UInt64(bytes) : 0)
+        let data = (try? handle.readToEnd()) ?? Data()
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    private func verifyClaudeSessionLink(pids: [Int]) {
+        let before = claudeLogTail().count
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            guard let self else { return }
+            let added = String(self.claudeLogTail().dropFirst(before))
+            guard added.contains("code entry deep link gated off")
+                    || added.contains("code entry link invalid")
+                    || added.contains("unrecognized code path") else { return }
+            self.claudeSessionLinkBlocked = true
+            if let app = self.focusableApp(pids) { app.activate() }
+        }
     }
 
     private func openRoute(focus: String, path: String, pids: [Int],
@@ -3837,7 +3873,7 @@ final class PetController: NSObject {
         if (focus.hasPrefix("warp://") || focus.hasPrefix("codex://")), URL(string: focus) != nil {
             return .deepLink
         }
-        if claudeSessionURL(sessionID) != nil { return .sessionLink }
+        if !claudeSessionLinkBlocked, claudeSessionURL(sessionID) != nil { return .sessionLink }
         if focusableApp(pids) != nil { return .focusApp }
         if !path.isEmpty, FileManager.default.fileExists(atPath: path) { return .folder }
         return .none
@@ -3850,7 +3886,12 @@ final class PetController: NSObject {
             // deep link ที่เจาะจงแท็บ — Warp สำหรับ Claude Code, codex:// สำหรับ Codex
             if let u = URL(string: focus), NSWorkspace.shared.open(u) { return }
         case .sessionLink:
-            if let u = claudeSessionURL(sessionID), NSWorkspace.shared.open(u) { return }
+            if let u = claudeSessionURL(sessionID), NSWorkspace.shared.open(u) {
+                // ลิงก์ห้องอาจถูกปิดไว้ฝั่งแอป แล้วเงียบไปเฉย ๆ ไม่พาไปไหน
+                // ถ้าเจอว่าถูกปิด ก็ดึงแอปขึ้นหน้าให้แทน จะได้ไม่กดแล้วไม่มีอะไรเกิดขึ้น
+                verifyClaudeSessionLink(pids: pids)
+                return
+            }
         case .focusApp, .folder, .none:
             break
         }

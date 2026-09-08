@@ -16,10 +16,10 @@ if (( STATUS != 0 )); then
     exit 1
 fi
 
-rg -q 'SIM OPEN ROUTE claude=sessionLink continue=true warp=deepLink app=focusApp plain=folder' "$LOG" || {
+rg -q 'SIM OPEN ROUTE claude=sessionLink continue=true blocked=focusApp warp=deepLink app=focusApp plain=folder' "$LOG" || {
     print -u2 "FAIL: wrong route back to a task"
     cat "$LOG" >&2
     exit 1
 }
 
-print "PASS: Claude tasks open the existing room, tab deep links still win, and fallbacks stay"
+print "PASS: Claude tasks open the existing room, fall back to the app when the link is blocked, and keep tab deep links"
