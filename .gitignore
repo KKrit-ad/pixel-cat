@@ -17,3 +17,6 @@ PixelCat.app/Contents/_CodeSignature/
 # debug snapshot ที่แอปเขียนออกมาเอง
 bubble-snap.png
 view-snap.png
+
+# เสียงต้นทางจาก BigSoundBank โหลดใหม่ได้ตาม CREDITS.md
+voice/source/
