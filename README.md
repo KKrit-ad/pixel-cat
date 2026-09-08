@@ -74,8 +74,23 @@ open ~/Desktop/pixel-cat/PixelCat.app
 
 | ไฟล์ | คืออะไร |
 |---|---|
-| `main.swift` | ซอร์สแอปทั้งหมด สไปรต์ชีทฝัง base64 อยู่ในไฟล์นี้ |
-| `build.sh` | คอมไพล์ใหม่แล้วอัปเดต `PixelCat.app` |
+| `main.swift` | จุดเริ่มของแอป (9 บรรทัด) โค้ดจริงอยู่ใน `Sources/` |
+| `Sources/Config.swift` | ค่าคงที่และ environment switch |
+| `Sources/CompanionCore.swift` | โหมด companion, snapshot บริบท, จังหวะคิด |
+| `Sources/WorkActivity.swift` | อ่านกิจกรรม coding/build/test จาก Codex และ Claude Code |
+| `Sources/CompanionChat.swift` | กล่องคุยและการกู้สถานการณ์เมื่อสมองออนไลน์ล่ม |
+| `Sources/ReturnRitual.swift` | พิธีต้อนรับกลับมา |
+| `Sources/LocalFileFinder.swift` | ค้นไฟล์ในเครื่องแบบ local ล้วน |
+| `Sources/CompanionProviders.swift` | สัญญากลางของสมอง, ความทรงจำ, บุคลิก |
+| `Sources/ManusProvider.swift` | สมองออนไลน์ฝั่ง Manus |
+| `Sources/ClaudeProvider.swift` | สมองออนไลน์ฝั่ง Claude |
+| `Sources/SpriteSheetData.swift` | สไปรต์ชีท 82 เฟรมฝังเป็น base64 |
+| `Sources/Sprites.swift` | ตาราง `POSES` และตัวถอดสไปรต์ชีท |
+| `Sources/Views.swift` | ตัวแมว, หัวใจ, พร็อพ, กรอบคำพูด |
+| `Sources/ChatBubbleInput.swift` | ช่องพิมพ์ข้อความเหนือหัวน้อง |
+| `Sources/PetController.swift` | สถานะ, แอนิเมชัน, เมนู, กล่องงาน และการโต้ตอบทั้งหมด |
+| `run-all-checks.sh` | รัน regression ทั้งหมด (shell + python) รวดเดียว |
+| `build.sh` | คอมไพล์ `Sources/*.swift` + `main.swift` แล้วอัปเดต `PixelCat.app` |
 | `cat-sheet.png` | สไปรต์ชีท 10496×100 (82 เฟรม × 128×100) RGBA พร้อม alpha แบบขอบคม |
 | `cat-sheet-before-thinking.png` | ชีทฐาน 59 เฟรมก่อนต่อแถบท่าคิด ใช้เป็น input ที่ทำซ้ำได้ |
 | `cat-thinking-v1.png` | แถบ 6 เฟรม: คิด 4 เฟรม + ปิ๊งคำตอบ 2 เฟรม |
