@@ -408,6 +408,34 @@ final class PetController: NSObject {
             return
         }
 
+        if ProcessInfo.processInfo.environment["PIXELCAT_SIMOPENROUTE"] != nil {
+            // ห้องที่ยังเปิดอยู่ต้องสลับไปหาแอป ไม่ใช่ resume ซึ่งจะได้ห้องซ้ำชื่อเดิม
+            // ต้องใช้แอป GUI จริงสักตัว เพราะ PixelCat เองเป็นแอปเมนูบาร์ที่โฟกัสไม่ได้
+            let mine = NSWorkspace.shared.runningApplications
+                .first { $0.activationPolicy == .regular }
+                .map { [Int($0.processIdentifier)] } ?? []
+            let sid = "0a1b2c3d-4e5f-6789-abcd-ef0123456789"
+            let alive = self.openRoute(focus: "", path: "/tmp", pids: mine,
+                                       sessionID: sid, sessionAlive: true)
+            let gone = self.openRoute(focus: "", path: "/tmp", pids: mine,
+                                      sessionID: sid, sessionAlive: false)
+            // deep link ที่เจาะจงแท็บอยู่แล้ว ยังต้องชนะทุกกรณี
+            let warp = self.openRoute(focus: "warp://session/abc", path: "/tmp", pids: mine,
+                                      sessionID: sid, sessionAlive: true)
+            // ห้องตายและไม่มี session id ก็ยังต้องพากลับไปที่โฟลเดอร์ได้
+            let plain = self.openRoute(focus: "", path: "/tmp", pids: [],
+                                       sessionID: "", sessionAlive: false)
+            let ok = alive == .focusApp && gone == .resume
+                && warp == .deepLink && plain == .folder
+            FileHandle.standardError.write(
+                ("SIM OPEN ROUTE alive=\(alive.rawValue) gone=\(gone.rawValue) "
+                + "warp=\(warp.rawValue) plain=\(plain.rawValue)\n").data(using: .utf8)!
+            )
+            NSApp.terminate(nil)
+            if !ok { exit(2) }
+            return
+        }
+
         if ProcessInfo.processInfo.environment["PIXELCAT_SIMFILEFINDER"] != nil {
             let fm = FileManager.default
             let root = fm.temporaryDirectory.appendingPathComponent(
@@ -3210,7 +3238,8 @@ final class PetController: NSObject {
                 || focusableApp(session.appPIDs) != nil
             entry.representedObject = [session.focusURL, session.cwd,
                                        session.appPIDs.map(String.init).joined(separator: ","),
-                                       resumeID(session.sessionID), session.source, session.id]
+                                       resumeID(session.sessionID), session.source, session.id,
+                                       isSessionAlive(session) ? "alive" : "gone"]
             entry.isEnabled = canJump
                 || (!session.cwd.isEmpty && FileManager.default.fileExists(atPath: session.cwd))
             if canJump { entry.title = "↩︎ " + title }
@@ -3265,6 +3294,12 @@ final class PetController: NSObject {
     /// แอป GUI ตัวแรกในสายโปรเซส — .app ตัวแรกที่เจออาจเป็นโปรเซสลูกที่สั่งไม่ได้
     /// (เช่น claude helper ของแอปเดสก์ท็อป) เลยต้องไล่ทั้งสายและเช็ค activationPolicy
     /// session id ที่ปลอดภัยพอจะใส่ลง URL — รับเฉพาะรูปแบบ UUID (ตัวอักษร ตัวเลข ขีด)
+    /// ห้องนั้นยังเปิดอยู่จริงไหม ดูจากโปรเซสที่ hook บันทึกไว้
+    private func isSessionAlive(_ session: WorkSession) -> Bool {
+        guard session.pid > 0 else { return false }
+        return kill(pid_t(session.pid), 0) == 0 || errno != ESRCH
+    }
+
     private func resumeID(_ raw: String) -> String {
         guard raw.count >= 8, raw.count <= 64 else { return "" }
         let ok = CharacterSet(charactersIn: "abcdefABCDEF0123456789-")
@@ -3282,7 +3317,8 @@ final class PetController: NSObject {
     @objc private func openWorkSession(_ sender: NSMenuItem) {
         guard let parts = sender.representedObject as? [String], parts.count >= 4 else { return }
         if parts.count >= 6 { acknowledgeWork(source: parts[4], id: parts[5]) }
-        openTarget(focus: parts[0], path: parts[1], pidList: parts[2], sessionID: parts[3])
+        openTarget(focus: parts[0], path: parts[1], pidList: parts[2], sessionID: parts[3],
+                   sessionAlive: parts.count >= 7 && parts[6] == "alive")
     }
 
     private func openTarget(_ session: WorkSession) {
@@ -3295,7 +3331,8 @@ final class PetController: NSObject {
         }
         openTarget(focus: session.focusURL, path: session.cwd,
                    pidList: session.appPIDs.map(String.init).joined(separator: ","),
-                   sessionID: resumeID(session.sessionID))
+                   sessionID: resumeID(session.sessionID),
+                   sessionAlive: isSessionAlive(session))
     }
 
     /// หาหน้าต่างของแอปที่เป็นเจ้าของงาน โดยอ่านเฉพาะ bounds/PID จาก Window Server
@@ -3780,27 +3817,45 @@ final class PetController: NSObject {
         setState("courier", duration: 99, then: finish)
     }
 
+    /// ทางที่จะพากลับไปหางาน เรียงตามความเจาะจง แยกออกมาเป็นค่าเดียวเพื่อตรวจได้
+    enum OpenRoute: String { case deepLink, focusApp, resume, folder, none }
+
+    /// resume ของ Claude คือ "เปิดห้องใหม่จาก transcript เดิม" ไม่ใช่ "กลับไปห้องที่เปิดอยู่"
+    /// ห้องไหนโปรเซสยังอยู่จึงต้องสลับไปหาแอปแทน ไม่งั้นได้ห้องซ้ำชื่อเดิมเพิ่มมาอีกอัน
+    private func openRoute(focus: String, path: String, pids: [Int],
+                           sessionID: String, sessionAlive: Bool) -> OpenRoute {
+        if (focus.hasPrefix("warp://") || focus.hasPrefix("codex://")), URL(string: focus) != nil {
+            return .deepLink
+        }
+        if sessionAlive, focusableApp(pids) != nil { return .focusApp }
+        if !sessionID.isEmpty { return .resume }
+        if focusableApp(pids) != nil { return .focusApp }
+        if !path.isEmpty, FileManager.default.fileExists(atPath: path) { return .folder }
+        return .none
+    }
+
     private func openTarget(focus: String, path: String, pidList: String,
-                            sessionID: String) {
-        // 1) deep link ที่เจาะจง session — Warp สำหรับ Claude Code, codex:// สำหรับ Codex
-        if (focus.hasPrefix("warp://") || focus.hasPrefix("codex://")),
-           let u = URL(string: focus) {
-            if NSWorkspace.shared.open(u) { return }
-        }
-        // 2) deep link ของ Claude Code เอง — เข้าห้องสนทนานั้นตรง ๆ
-        //    รูปแบบมาจากโค้ด Claude Code: new URL("claude://resume") + ?session=<id>
-        if !sessionID.isEmpty,
-           var c = URLComponents(string: "claude://resume") {
-            c.queryItems = [URLQueryItem(name: "session", value: sessionID),
-                            URLQueryItem(name: "source", value: "pixelcat")]
-            if let u = c.url, NSWorkspace.shared.open(u) { return }
-        }
-        // 3) สั่งแอปที่รัน Claude ให้ขึ้นหน้า — ใช้ได้กับทุกเทอร์มินัล แต่ไม่เจาะจงแท็บ
+                            sessionID: String, sessionAlive: Bool = false) {
         let pids = pidList.split(separator: ",").compactMap { Int($0) }
-        if let app = focusableApp(pids) {
-            app.activate()
-            return
+        switch openRoute(focus: focus, path: path, pids: pids,
+                         sessionID: sessionID, sessionAlive: sessionAlive) {
+        case .deepLink:
+            // deep link ที่เจาะจงแท็บ — Warp สำหรับ Claude Code, codex:// สำหรับ Codex
+            if let u = URL(string: focus), NSWorkspace.shared.open(u) { return }
+        case .focusApp:
+            // ห้องยังเปิดอยู่ สลับไปหาแอปที่รันมันพอ ไม่ต้อง resume ให้ได้ห้องซ้ำ
+            if let app = focusableApp(pids) { app.activate(); return }
+        case .resume:
+            // ห้องปิดไปแล้ว ค่อยให้ Claude Code เปิดห้องจาก transcript เดิม
+            if var c = URLComponents(string: "claude://resume") {
+                c.queryItems = [URLQueryItem(name: "session", value: sessionID),
+                                URLQueryItem(name: "source", value: "pixelcat")]
+                if let u = c.url, NSWorkspace.shared.open(u) { return }
+            }
+        case .folder, .none:
+            break
         }
+        if let app = focusableApp(pids) { app.activate(); return }
         guard !path.isEmpty, FileManager.default.fileExists(atPath: path) else { return }
         NSWorkspace.shared.open(URL(fileURLWithPath: path, isDirectory: true))
     }
