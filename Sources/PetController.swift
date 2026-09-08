@@ -371,13 +371,28 @@ final class PetController: NSObject {
             let focusRestores = !voice.muted
 
             // งาน AI เสร็จต้องมีเสียงเบา ๆ หนึ่งครั้ง และงานถัดไปที่เสร็จไล่กันต้องไม่ดังซ้ำ
+            // เดินผ่านทางเดียวกับของจริง (สถานะเปลี่ยน → แจ้งเตือน → ภาษากาย) ไม่เรียกลัด
             voice.resetThrottleForTests()
-            self.playWorkEmotion(.done)
+            self.speechOn = true
+            self.focusPhase = .idle
+            self.didSeedSessionStates = true
+            let doneID = "voice-done"
+            func room(_ id: String, _ state: String) -> WorkSession {
+                WorkSession(source: "claude", id: id, state: state, name: "pixel-cat",
+                            cwd: "/tmp", message: "", updatedAt: Date().timeIntervalSince1970,
+                            contextPercent: 10, focusURL: "", appPIDs: [], sessionID: id,
+                            topic: "งานเสร็จ")
+            }
+            self.previousSessionStates = ["claude:\(doneID)": "working"]
+            self.detectWorkNotices([room(doneID, "idle")])
             let doneChimed = voice.playLog == ["trill"]
-            self.playWorkEmotion(.batchDone)
+            self.activeWorkNotice = nil
+            self.previousSessionStates = ["claude:second-done": "working"]
+            self.detectWorkNotices([room("second-done", "idle")])
             let doneQuietRepeat = voice.playLog == ["trill"]
-            self.playWorkEmotion(.input)
-            self.playWorkEmotion(.failed)
+            self.activeWorkNotice = nil
+            self.previousSessionStates = ["claude:asking": "working"]
+            self.detectWorkNotices([room("asking", "input")])
             let waitingSilent = voice.playLog == ["trill"]
             let doneVoice = doneChimed && doneQuietRepeat && waitingSilent
 
@@ -4127,7 +4142,7 @@ final class PetController: NSObject {
             // เสียงบอกว่า AI ทำงานเสร็จ: ครืดสั้น ๆ เบากว่าเสียงเล่นครึ่งหนึ่ง
             // และเว้นจังหวะยาว งานหลายตัวเสร็จไล่กันก็ได้ยินครั้งเดียว
             if kind != .returned {
-                CatVoice.shared.play(.trill, minGap: 20.0, gapAny: 1.5, volumeScale: 0.5)
+                CatVoice.shared.play(.trill, minGap: 20.0, gapAny: 1.5, volumeScale: 0.8)
             }
             // สงบ=ยืดแล้วนั่ง, ปกติ/ซน=เด้งหนึ่งครั้ง; ไม่มีโหมดไหนสั่นวน
             let s = max(0.7, scale * 0.85)
