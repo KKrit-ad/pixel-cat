@@ -31,18 +31,20 @@ open ~/Desktop/pixel-cat/PixelCat.app
 - **จิ้งจก** — โผล่มาเป็นครั้งคราวบนขอบหน้าต่างหรือบนพื้น วิ่งเป็นช่วง ๆ แบบจิ้งจกจริง น้องจะปีนขึ้นไปไล่ พอเข้าใกล้จิ้งจกจะเผ่นหนี — **ถ้ากำลังหลับอยู่จะสะดุ้งตื่น ยืดตัวก่อนแล้วค่อยวิ่งไปไล่** (ยกเว้นกรณีสั่งให้นอนจากเมนู จะปล่อยให้นอนต่อ); พ่อคลิกตรงตัวจิ้งจกให้หายไปก่อนได้ด้วย
 - **โหมดโฟกัส 25/5** — เริ่มจากเมนูบาร์หรือคลิกน้อง เวลาโฟกัสจะแสดงบนเมนูบาร์ น้องหยุดพูดแทรกและไม่ไล่เมาส์/สิ่งล่อ แล้วสะกิดให้พักสายตา 5 นาทีเมื่อครบเวลา
 - **ระดับความซนของแอนิเมชัน** — เลือกสงบ/ปกติ/ซนได้จากเมนูและจำค่าไว้ โหมดสงบตัด zoomies การไล่จิ้งจก การปีนเล่น และการตะปบเมาส์ที่เกิดเอง พร้อมลดท่าดีใจ; ถ้าเปิด Reduce Motion ของ macOS น้องจะใช้โหมดสงบและไม่ปล่อย particle โดยอัตโนมัติ
+- **Cinema Mode** — ค่าเริ่มต้น `อัตโนมัติ` จะซ่อนน้อง กล่องพูด ช่องคุย หัวใจ ลูกบอล และกิ้งก่าเมื่อเบราว์เซอร์หรือแอปดูวิดีโอด้านหน้าเข้า Full Screen แต่ยังอยู่ด้วยเมื่อ Xcode/IDE/Terminal เต็มจอ; เลือก `ซ่อนทุก Full Screen` หรือ `ไม่ซ่อน` ได้จากเมนู เมื่อออกจากหนังหน้าต่างเดิมจะค่อย ๆ กลับมา งานกับ Focus timer ยังเดินต่อและเสียงเงียบตลอดช่วงที่ซ่อน ตรวจจาก PID กับ bounds เท่านั้นจึงไม่ต้องใช้ Screen Recording
 - **แอนิเมชันลื่นและนิ่งขึ้น** — ใช้ anchor metadata จำนวนเต็มเพื่อล็อกลำตัวในแกน X และแนวสัมผัสเท้าในแกน Y ของวงจรเดิน/วิ่ง/นั่ง/ปีน โดยไม่ใส่ wobble ซ้ำ พร้อมเฟรม anticipation ก่อนกระโดดและ settle ก่อนหยุดนั่ง; Reduce Motion จะข้ามเฟรมเชื่อมเหล่านี้
 - **AI companion ระยะที่ 1** — โหมด local เฝ้าบริบทจากสถานะงาน, แอปที่ active และเวลา idle โดยไม่ส่งข้อมูลออกหรือใช้ token; เลือก ปิด/เฝ้าเงียบ/ผู้ช่วย ได้จากเมนู
 - **คีย์ลัดคุยกับอั่งเปา** — กด `⌃⌥C` จากแอปไหนก็ได้เพื่อเปิดกล่องพิมพ์เหนือหัวน้องทันที ใช้ Carbon hot key จึงไม่ต้องเปิดสิทธิ์ Accessibility หรือ Input Monitoring
 - **ตามหาของบนเครื่อง** — เปิดกล่องคุยแล้วพิมพ์ `/หา README.md`, `หาไฟล์ รายงาน.pdf` หรือ `โฟลเดอร์ pixel-cat อยู่ไหน`; น้องค้นเฉพาะชื่อไฟล์/โฟลเดอร์ใต้ home ด้วย Spotlight และ fallback แบบจำกัด ไม่อ่านเนื้อหาและไม่ส่งคำค้นหรือ path ไป AI บอกตำแหน่งเป็น path แบบ `~/Documents/…` ทั้งใน bubble และเมนู (โฟลเดอร์ลึกจะย่อช่วงกลาง) ผลอันดับหนึ่งคลิกเปิดใน Finder ได้ ส่วนผลล่าสุดสูงสุด 5 รายการอยู่ในเมนู `ของที่น้องหาเจอ`
+- **Delivery Cat** — เฝ้าไฟล์ใหม่ใน Downloads/AirDrop และ Screenshot บน Desktop แบบ local รอจนขนาดไฟล์นิ่งก่อนคาบกล่องพัสดุมาให้ และรวมหลายไฟล์ที่เข้ามาใกล้กันเป็นกล่องเดียว; กล่องข้อความเลือก `เปิด`, `เก็บ` ไว้ใน `Documents/Angpao Deliveries`, `ส่ง AI` ผ่าน Courier ไปยัง Codex/Claude หรือ `ผ่านก่อน` ได้ ไม่มีการย้ายไฟล์หรือส่งข้อมูลออกจนกว่าจะกดเอง ปิดการเฝ้าและเปิดดูพัสดุล่าสุดได้จากเมนู `Delivery Cat`
 - **Manus companion ระยะที่ 2** — เมื่อกำหนด `PIXELCAT_MANUS_API_KEY` แล้ว โหมดผู้ช่วยจะส่ง metadata ที่กรองแล้วไปยัง Manus API v2 ด้วย `manus-1.6-lite` และรับคำตอบแบบ structured JSON; หากไม่มี key, network ล้มเหลว หรือ timeout จะกลับไปใช้ local rules อัตโนมัติ
 - **ภาษากายตอนตอบ AI** — หลังส่งข้อความ น้องจะเอียงหัวฟังก่อน แล้วนั่งแตะแก้มพร้อมก้อนความคิด 1–3 จุดและกระพริบตา; ถ้าคิดเกิน 8 วินาทีจะบอกให้รออีกนิด เมื่อสำเร็จมีท่า “ปิ๊ง!” กับดาวเล็ก ๆ ส่วนข้อผิดพลาดจะเอียงหัวเศร้าโดยไม่สั่น ระหว่าง Focus และ Reduce Motion จะลดการเคลื่อนไหวให้อัตโนมัติ และแจ้งงานอื่นจะรอจนอ่านข้อความตอบจบ
 - **Coding + Build/Test Awareness** — อ่านกิจกรรมล่าสุดจาก Codex rollout ในเครื่องและ event ของ Claude Code แล้วเปลี่ยนท่าตามงานจริง: ตอนแก้โค้ดน้องพิมพ์คีย์บอร์ดจิ๋ว อุ้งเท้าสลับกดและหางสะบัดตามจังหวะ, build ใส่หมวกช่างถือค้อน, test จ้องหน้าจอและลุ้น progress, ผ่านชูอุ้งเท้าพร้อมเครื่องหมายถูก, พังถือกระดาษ error ร้องไห้โดยไม่สั่น และรอ permission ยกป้าย `?`; ถ้ามีหลายงานจะให้ permission สำคัญที่สุด ส่วน Focus จะไม่ถูกแทรกและ Reduce Motion จะค้างเฟรมสื่อความหมายแทนการวน
-- **กล่องงานอัจฉริยะ + แจ้งเตือนคลิกได้** — รวมงานล่าสุดจาก **Codex** และ **Claude Code** ไว้ในกล่องเดียวโดยแบ่งเป็นคนละ section ชัดเจน แต่ละฝั่งแสดงสถานะรอคำตอบ/กำลังทำ/เสร็จ/พัง เรียงงานที่ต้องดูก่อนและรวม badge; เมื่อ session เปลี่ยนสถานะ น้องจะบอกชื่อ task/โปรเจกต์และแสดงอารมณ์ตามระดับความซน: เสร็จแล้วจะย่อ–เด้งครั้งเดียว–ชูหางพร้อมประกายแล้วนั่ง, รอคำตอบเอียงหัวหนึ่งครั้งแล้วนั่งรอ, failed ก้มหน้าก่อนหลับตานั่งร้องไห้โดยไม่เขย่าตัว คลิกข้อความแล้วกลับไปยัง Codex task, แท็บ Warp หรือห้อง Claude Code เดิม
+- **กล่องงานอัจฉริยะ + แจ้งเตือนคลิกได้** — รวมงานล่าสุดจาก **Codex** และ **Claude Code** ไว้ในกล่องเดียวโดยแบ่งเป็นคนละ section ชัดเจน แต่ละฝั่งแสดงสถานะรอคำตอบ/กำลังทำ/เสร็จ/พัง เรียงงานที่ต้องดูก่อนและรวม badge; เมื่อ session เปลี่ยนสถานะ น้องจะบอกชื่อ task/โปรเจกต์และแสดงอารมณ์ตามระดับความซน: เสร็จแล้วจะย่อ–เด้งครั้งเดียว–ชูหางพร้อมประกายแล้วนั่ง, รอคำตอบเอียงหัวหนึ่งครั้งแล้วนั่งรอ, failed ก้มหน้าก่อนหลับตานั่งร้องไห้โดยไม่เขย่าตัว คลิกข้อความแล้วกลับไปยัง Codex task, แท็บ Warp หรือห้อง Claude Code เดิม; ถ้าบัญชี Claude ปิด deep link ไว้ น้องจะตรวจจาก log แล้วกดแถวใน sidebar ให้แทน
 - **พิธีต้อนรับกลับมา** — เมื่อไม่มีการใช้งานเครื่องอย่างน้อย 10 นาที น้องจะวิ่งมาหาแล้วสรุปงานสำคัญที่เปลี่ยนระหว่างนั้นไม่เกิน 3 งาน โดยเรียง พัง → รอคำตอบ → เสร็จ; แสดงครั้งเดียวต่อการกลับมา คลิกข้อความเพื่อเปิดงานสำคัญที่สุด และถ้าอยู่ใน Focus จะเก็บพิธีไว้จนโฟกัสจบ กด `ทดลองพิธีต้อนรับ` ในเมนูเพื่อดูได้ทันที
 - **Smart Action Bubble** — กล่องแจ้งงานมีปุ่มตามสถานะ: งานเสร็จเลือก `เปิดงาน` หรือ `สรุปให้`, งานพังเลือก `เปิดงาน` หรือ `ช่วยแก้`, งานรอเลือก `เปิดตอบ` หรือ `ไว้ทีหลัง`; คำขอสรุป/ช่วยแก้จะถูกคัดลอกแล้วพากลับ task เดิมให้วางด้วย ⌘V โดยไม่ execute อัตโนมัติ ส่วน `ไว้ทีหลัง` เลื่อนเตือน 5 นาทีแต่ยังเก็บ badge ไว้
 - **Task Shepherd** — งานที่รอคำตอบทำให้น้องเดินไปทางหน้าต่างเจ้าของงานแล้วชี้ค้าง คลิกได้ทั้งตัวน้องและข้อความเพื่อกลับ task นั้น; งาน failed จะแสดงท่าร้องไห้ก่อนแล้วค่อยพาไป
-- **Drag Courier** — ลากไฟล์หรือข้อความวางบนตัวน้อง เลือกปลายทางจาก section Codex/Claude Code แล้วน้องจะคาบจดหมายวิ่งไป เปิด task และเตรียม payload ใน clipboard ให้กด ⌘V โดยไม่ execute ข้อความหรือ path
+- **Drag-to-Ask + Drag Courier** — ลากไฟล์หรือข้อความวางบนตัวน้อง น้องจะเอียงหัวรอฟังและใส่คำถามแนะนำตามชนิดไฟล์ให้แก้ได้ เช่น สรุป PDF, ดูภาพ หรือ review โค้ด จากนั้นเลือกปลายทางใน section Codex/Claude Code แล้วน้องจะคาบจดหมายวิ่งไป เปิด task และวางคำถามพร้อม path ลงช่องพิมพ์ให้อัตโนมัติเมื่ออนุญาต Accessibility แต่จะไม่กด Enter ส่งแทน; ถ้ายังไม่ได้สิทธิ์จะเก็บไว้ใน clipboard ให้กด ⌘V และกด Esc เพื่อยกเลิกได้
 - **Context Rescue** — ที่ 80% น้องเตือนเบา ๆ; ที่ 90% จะแพ็กเอกสารลงกล่องแล้วคาบค้างรอ คลิกตัวน้องหรือ bubble เพื่อเปิด task ใหม่ของ Codex/Claude พร้อมโฟลเดอร์เดิมและ handoff prompt ที่สรุปข้อมูล session และสั่งตรวจ working tree ก่อนทำต่อ ทั้งยังสำรอง handoff ไว้ใน clipboard, เตือนเพียงครั้งเดียวจนกว่า context จะต่ำกว่า 70%, เลื่อนการเตือนระหว่าง Focus และข้ามท่าแพ็กเมื่อเปิด Reduce Motion
 - **เตือนแบบไม่จู้จี้** — session ที่รายงานสถานะรอคำตอบเกิน 3 นาทีจะเตือนซ้ำเพียงครั้งเดียว; ทั้งการเตือนทันทีและเตือนซ้ำจะเข้าคิวเงียบ ๆ ระหว่างโหมดโฟกัสแล้วค่อยแสดงเมื่อโฟกัสจบ เมื่อคลิกเปิดงาน badge จะถูก acknowledge และจะรีเซ็ตเมื่อสถานะงานเปลี่ยน
 - **ภาษากายที่บอกสถานะ** — งานที่รันเกิน 2 นาทีทำให้น้องเอียงหัวแล้วนั่งเฝ้าเงียบ ๆ เพียงครั้งเดียว ส่วนหลายงานที่เสร็จพร้อมกันจะฉลองด้วยดาวสีทองผสมหัวใจเพียงชุดเดียว กล่องฉลองจะเปิดงานล่าสุดและงานทั้งหมดดูได้ในกล่องงาน
@@ -83,10 +85,14 @@ open ~/Desktop/pixel-cat/PixelCat.app
 | `Sources/CompanionChat.swift` | กล่องคุยและการกู้สถานการณ์เมื่อสมองออนไลน์ล่ม |
 | `Sources/ReturnRitual.swift` | พิธีต้อนรับกลับมา |
 | `Sources/LocalFileFinder.swift` | ค้นไฟล์ในเครื่องแบบ local ล้วน |
+| `Sources/DeliveryWatcher.swift` | เฝ้าไฟล์ใหม่และรอให้ขนาดนิ่งก่อนส่งเข้า Delivery Cat |
+| `Sources/CinemaMode.swift` | นโยบายและตัวตรวจ Full Screen สำหรับ Cinema Mode |
+| `Sources/ClaudeDeepLinkLog.swift` | ตรวจว่า Claude ปฏิเสธ deep link จาก byte offset จริงและรองรับ log rotation |
+| `Sources/ClaudeSidebar.swift` | ทางสำรองที่กดห้องเดิมใน Claude sidebar ผ่าน Accessibility |
 | `Sources/CompanionProviders.swift` | สัญญากลางของสมอง, ความทรงจำ, บุคลิก |
 | `Sources/ManusProvider.swift` | สมองออนไลน์ฝั่ง Manus |
 | `Sources/ClaudeProvider.swift` | สมองออนไลน์ฝั่ง Claude |
-| `Sources/SpriteSheetData.swift` | สไปรต์ชีท 82 เฟรมฝังเป็น base64 |
+| `Sources/SpriteSheetData.swift` | สไปรต์ชีท 86 เฟรมฝังเป็น base64 |
 | `Sources/Sprites.swift` | ตาราง `POSES` และตัวถอดสไปรต์ชีท |
 | `Sources/Views.swift` | ตัวแมว, หัวใจ, พร็อพ, กรอบคำพูด |
 | `Sources/ChatBubbleInput.swift` | ช่องพิมพ์ข้อความเหนือหัวน้อง |
@@ -98,7 +104,7 @@ open ~/Desktop/pixel-cat/PixelCat.app
 | `voice/*.wav` | เสียงที่สังเคราะห์ไว้ ฟังก่อนได้ด้วย `afplay voice/meow.wav` |
 | `run-all-checks.sh` | รัน regression ทั้งหมด (shell + python) รวดเดียว |
 | `build.sh` | คอมไพล์ `Sources/*.swift` + `main.swift` แล้วอัปเดต `PixelCat.app` |
-| `cat-sheet.png` | สไปรต์ชีท 10496×100 (82 เฟรม × 128×100) RGBA พร้อม alpha แบบขอบคม |
+| `cat-sheet.png` | สไปรต์ชีท 11008×100 (86 เฟรม × 128×100) RGBA พร้อม alpha แบบขอบคม |
 | `cat-sheet-before-thinking.png` | ชีทฐาน 59 เฟรมก่อนต่อแถบท่าคิด ใช้เป็น input ที่ทำซ้ำได้ |
 | `cat-thinking-v1.png` | แถบ 6 เฟรม: คิด 4 เฟรม + ปิ๊งคำตอบ 2 เฟรม |
 | `make-thinking-sprites.swift` | สร้างแถบท่าคิดและประกอบต่อท้ายชีทฐานแบบ pixel-aligned |
@@ -107,12 +113,18 @@ open ~/Desktop/pixel-cat/PixelCat.app
 | `make-build-test-sprites.swift` | สร้างแอนิเมชันสถานะงานและประกอบเป็นชีท 78 เฟรม |
 | `cat-sheet-before-coding.png` | ชีทฐาน 78 เฟรมก่อนต่อท่าพิมพ์โค้ด |
 | `cat-coding-v1.png` | แถบ 4 เฟรมอุ้งเท้าสลับพิมพ์และหางสะบัด |
-| `make-coding-sprites.swift` | สร้างท่าพิมพ์และประกอบเป็นชีท production 82 เฟรม |
+| `make-coding-sprites.swift` | สร้างท่าพิมพ์และประกอบเป็นชีทฐาน 82 เฟรมก่อนต่อ Delivery Cat |
+| `cat-delivery-v1.png` | ภาพต้นทาง 4 จังหวะของท่าคาบพัสดุที่สร้างด้วย ImageGen |
+| `cat-delivery-strip-v1.png` | แถบ Delivery Cat 4 เฟรมที่ตัดพื้นหลังเป็น alpha และย่อเป็น 128×100 |
+| `cat-sheet-before-delivery.png` | ชีทฐาน 82 เฟรมก่อนต่อ Delivery Cat |
 | `cat-context-rescue-v1.png` | สี่เฟรมแพ็กเอกสาร–ปิดกล่อง–คาบกล่องสำหรับ Context Rescue |
 | `import-crisp-reference-sprites.swift` | สร้างชีทความละเอียดสูงจากภาพอ้างอิง พร้อมตัดพื้นหลังและประกอบเฟรม idle/ปีน |
 | `check-sprite-halo.swift` | ตรวจไม่ให้ขอบขาวหรือ checkerboard ติดรอบตัวน้อง |
 | `check-work-inbox.sh` | ทดสอบ section Codex/Claude Code ลำดับความสำคัญ deep link และ badge ของกล่องงาน |
 | `check-work-notification.sh` | ทดสอบว่าทั้ง Codex และ Claude Code มีกล่องแจ้งงานระบุชื่อและคลิกกลับ session ถูกฝั่ง |
+| `check-claude-link-monitor.sh` | ทดสอบการตรวจ deep-link rejection หลัง append และ log rotation |
+| `check-cinema-mode.sh` | ทดสอบโหมดอัตโนมัติ/ทุก Full Screen/ไม่ซ่อน และการซ่อน-คืนหน้าต่างทุกชิ้น |
+| `check-delivery-cat.sh` | ทดสอบไฟล์ใหม่/ขนาดนิ่ง/Screenshot/ไฟล์ชั่วคราว การรวมพัสดุ ท่าและปุ่มทั้งหมด |
 | `check-return-ritual.sh` | ทดสอบเวลาไม่อยู่ขั้นต่ำ, Focus, ลำดับความสำคัญ, one-shot, ข้อความสรุป, ท่าวิ่ง, ลิงก์ และปุ่มพรีวิว |
 | `check-work-emotions.sh` | ทดสอบความแรงที่มองเห็นได้จริงของท่าดีใจและท่า failed จาก event path จริง |
 | `check-animation-anchor.sh` | ทดสอบว่า landmark ของลำตัวไม่ drift ระหว่างเฟรมเดิน/วิ่ง/นั่ง/ปีน |
@@ -144,7 +156,10 @@ swift -module-cache-path /tmp/pixel-cat-swift-cache \
 swift -module-cache-path /tmp/pixel-cat-swift-cache \
   make-build-test-sprites.swift cat-sheet-before-build-test.png cat-build-test-v1.png cat-sheet-before-coding.png
 swift -module-cache-path /tmp/pixel-cat-swift-cache \
-  make-coding-sprites.swift cat-sheet-before-coding.png cat-coding-v1.png cat-sheet.png
+  make-coding-sprites.swift cat-sheet-before-coding.png cat-coding-v1.png cat-sheet-before-delivery.png
+swift -module-cache-path /tmp/pixel-cat-swift-cache \
+  import-task-action-sprites.swift cat-delivery-v1.png cat-sheet-before-delivery.png \
+  cat-delivery-strip-v1.png cat-sheet.png delivery
 base64 -i cat-sheet.png -o cat-sheet.b64
 python3 embed_sprite.py
 ./build.sh
@@ -154,7 +169,7 @@ python3 embed_sprite.py
 
 ## หมายเหตุ
 
-- ไม่ต้องขอ permission ใด ๆ (ไม่ได้ใช้ Screen Recording / Accessibility)
+- ฟีเจอร์ทั่วไปไม่ต้องขอ permission; เฉพาะการกลับไปห้อง Claude เดิมเมื่อบัญชีถูกปิด deep link เท่านั้นที่น้องจะขอ Accessibility เพื่อกดแถวใน sidebar ให้
 - ไบนารีไม่ได้เซ็น — build เองในเครื่องเลยไม่ติด Gatekeeper แต่ก็ก๊อปไปเครื่องอื่นไม่ได้ ต้อง build ใหม่
 - ตำแหน่งพื้นอิงจาก `visibleFrame` ของจอ = เดินอยู่เหนือ Dock พอดี รองรับหลายจอ
 
@@ -202,6 +217,8 @@ PIXELCAT_DEBUG=1 ./PixelCat.app/Contents/MacOS/PixelCat
 | `PIXELCAT_SIMSHORTCUTGECKO=1` | จำลองลงทะเบียน `⌃⌥C`, เปิดกล่องแชต และคลิกกิ้งก่าตาม alpha mask |
 | `PIXELCAT_SIMVOICE=1` | จำลองระบบเสียง: ตรวจ asset, การเว้นจังหวะ, การปิดเสียง และการเงียบตอนโฟกัส โดยไม่เล่นเสียงจริง |
 | `PIXELCAT_SIMFILEFINDER=1` | จำลองค้นไฟล์แบบ local ตั้งแต่ตีความภาษาไทยจนถึง bubble, เมนูผลลัพธ์ และ Reveal in Finder |
+| `PIXELCAT_SIMCINEMA=1` | จำลองซ่อนและคืนหน้าต่างแมว กล่องพูด ช่องคุย หัวใจ ลูกบอล และกิ้งก่า |
+| `PIXELCAT_SIMDELIVERY=1` | จำลองพัสดุใหม่สองไฟล์ด้วยโฟลเดอร์ชั่วคราว โดยไม่แตะ Downloads จริง |
 | `PIXELCAT_SIMBALL=1` | จำลองฟิสิกส์ลูกบอลกับการไล่ตบ (`=gecko` เทสจิ้งจกแทน) |
 
 Claude Code hook ส่ง event ละเอียดมายัง `~/.pixelcat/inbox` ได้ในรูป `EVENT|ข้อความ` โดยใช้ `coding`/`edit`, `build`, `test`, `test_pass`, `test_fail` หรือ `permission`; event เดิม `busy`, `done`, `ask`, `fail` ยังรองรับและจะอนุมานจากข้อความเมื่อระบุคำว่าแก้โค้ด/build/test/permission

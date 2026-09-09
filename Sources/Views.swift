@@ -329,6 +329,9 @@ enum SmartBubbleActionID: String {
     case summarize
     case helpFix
     case later
+    case keepDelivery
+    case sendDelivery
+    case dismissDelivery
 }
 
 struct SmartBubbleAction: Equatable {

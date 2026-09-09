@@ -4,9 +4,13 @@
 import Cocoa
 
 final class CompanionInputPanel: NSPanel {
+    var onCancel: (() -> Void)?
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
-    override func cancelOperation(_ sender: Any?) { orderOut(nil) }   // Esc = เก็บกล่องพิมพ์
+    override func cancelOperation(_ sender: Any?) {
+        orderOut(nil)                         // Esc = เก็บกล่องพิมพ์
+        onCancel?()
+    }
 }
 
 /// ผลลัพธ์ของหนึ่งรอบสนทนา แยก error ให้ชัดว่าเป็นอะไร จะได้ไม่ขึ้น "ยังตอบไม่ได้" ลอย ๆ

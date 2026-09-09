@@ -41,11 +41,11 @@ func image(width: Int, height: Int, pixels: inout [UInt8]) -> CGImage {
 
 let args = CommandLine.arguments
 guard args.count == 5 || args.count == 6 else {
-    fatalError("usage: swift import-task-action-sprites.swift generated.png old-sheet.png strip.png combined.png [task-actions|context-rescue]")
+    fatalError("usage: swift import-task-action-sprites.swift generated.png old-sheet.png strip.png combined.png [task-actions|context-rescue|delivery]")
 }
 let mode = args.count == 6 ? args[5] : "task-actions"
-let generatedFrameCount = mode == "context-rescue" ? 4 : 8
-let oldFrameCount = mode == "context-rescue" ? 55 : 47
+let generatedFrameCount = ["context-rescue", "delivery"].contains(mode) ? 4 : 8
+let oldFrameCount = mode == "context-rescue" ? 55 : (mode == "delivery" ? 82 : 47)
 let generated = load(args[1])
 let oldSheet = load(args[2])
 precondition(oldSheet.width == oldFrameCount * 128 && oldSheet.height == 100,
@@ -57,6 +57,14 @@ func index(_ x: Int, _ y: Int) -> Int { (y * width + x) * 4 }
 func isMatte(_ x: Int, _ y: Int) -> Bool {
     let i = index(x, y)
     let r = Int(pixels[i]), g = Int(pixels[i + 1]), b = Int(pixels[i + 2])
+    if mode == "delivery" {
+        // ImageGen ส่ง checkerboard สีเทามาเป็น RGB จริง จึง flood-fill สี neutral
+        // จากขอบภาพแทน ส่วนเส้นดำ สีขนอมฟ้า ตา หู และกล่องสีน้ำตาลเป็นกำแพง
+        // ล้อมเนื้อสีอ่อนของตัวแมวไว้ไม่ให้ถูกลบตามพื้นหลัง
+        return min(r, g, b) >= 86
+            && max(r, g, b) - min(r, g, b) <= 24
+            && b - r <= 12
+    }
     return min(r, g, b) >= 214 && max(r, g, b) - min(r, g, b) <= 30
 }
 
@@ -133,13 +141,18 @@ for frame in 0..<generatedFrameCount {
 }
 
 for frame in 0..<generatedFrameCount {
-    let b = bounds[frame]
+    // เฟรมสุดท้ายจาก ImageGen มีช่องเปิดใน outline ทำให้ matte flood เข้าไปในหน้า
+    // ใช้เฟรมยืนข้างพัสดุที่สะอาดเป็น ready pose แทน (ปลายทาง X ยังเป็นเฟรมที่ 4)
+    let sourceFrame = mode == "delivery" && frame == 3 ? 0 : frame
+    let b = bounds[sourceFrame]
     guard let crop = cleaned.cropping(to: CGRect(x: b.x, y: b.y, width: b.width, height: b.height)) else {
         fatalError("cannot crop frame \(frame)")
     }
     let groupPointing = mode == "task-actions" && frame < 4
-    let maxW: CGFloat = mode == "context-rescue" ? 118 : (groupPointing ? 110 : 118)
-    let maxH: CGFloat = mode == "context-rescue" ? 88 : (groupPointing ? 88 : 72)
+    let maxW: CGFloat = mode == "context-rescue" ? 118
+        : (mode == "delivery" ? 122 : (groupPointing ? 110 : 118))
+    let maxH: CGFloat = mode == "context-rescue" ? 88
+        : (mode == "delivery" ? 92 : (groupPointing ? 88 : 72))
     let scale = min(maxW / CGFloat(b.width), maxH / CGFloat(b.height))
     let dw = floor(CGFloat(b.width) * scale)
     let dh = floor(CGFloat(b.height) * scale)

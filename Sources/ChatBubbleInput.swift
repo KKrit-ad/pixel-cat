@@ -11,6 +11,16 @@ final class ChatBubbleInputView: NSView, NSTextFieldDelegate {
     static let minWidth: CGFloat = 200
     static let maxWidth: CGFloat = 460
 
+    func setPlaceholder(_ text: String) {
+        let centered = NSMutableParagraphStyle(); centered.alignment = .center
+        field.placeholderAttributedString = NSAttributedString(
+            string: text,
+            attributes: [.font: BUBBLE_FONT,
+                         .paragraphStyle: centered,
+                         .foregroundColor: PixelBubble.ink.withAlphaComponent(0.4)]
+        )
+    }
+
     /// กว้างพอดีข้อความ ใช้สูตรเดียวกับ BubbleView.size(for:)
     static func width(for text: String) -> CGFloat {
         let w = ceil((text as NSString).size(withAttributes: [.font: BUBBLE_FONT]).width) + 34
@@ -46,12 +56,7 @@ final class ChatBubbleInputView: NSView, NSTextFieldDelegate {
         field.target = target
         field.action = action
         field.delegate = self
-        let centered = NSMutableParagraphStyle(); centered.alignment = .center
-        field.placeholderAttributedString = NSAttributedString(
-            string: "คุยกับอั่งเปา…",
-            attributes: [.font: BUBBLE_FONT,
-                         .paragraphStyle: centered,
-                         .foregroundColor: PixelBubble.ink.withAlphaComponent(0.4)])
+        setPlaceholder("คุยกับอั่งเปา…")
         addSubview(field)
         field.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([

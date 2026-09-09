@@ -21,7 +21,9 @@ except Exception: print('')" 2>/dev/null)
 }
 
 [[ -f "$SESS" ]] || { print -u2 "FAIL: ไม่พบ $SESS"; exit 1; }
-probe "เก็บ UUID ครบไม่ตัดขีด" "2fb75158-3f2c-41cb-ac73-532f76edd5cf" "2fb75158-3f2c-41cb-ac73-532f76edd5cf"
+# ใช้ UUID ใหม่ทุกครั้ง จะได้ไม่เขียนทับ/ลบไฟล์ของ session จริงบนเครื่อง
+TEST_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
+probe "เก็บ UUID ครบไม่ตัดขีด" "$TEST_ID" "$TEST_ID"
 
 # URL ที่ประกอบได้ต้องถูกต้อง
 URL=$(python3 -c "

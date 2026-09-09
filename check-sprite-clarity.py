@@ -25,7 +25,7 @@ assert default_match, "missing default scale"
 default_scale = int(default_match.group(1)) / 10
 
 png_width, png_height = struct.unpack(">II", sheet[16:24])
-frame_count = 82
+frame_count = 86
 assert (png_width, png_height) == (frame_width * frame_count, frame_height), (
     f"sheet dimensions {png_width}x{png_height} do not match "
     f"{frame_count} frames of {frame_width}x{frame_height}"

@@ -11,7 +11,7 @@ guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFUR
       let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
     fatalError("Cannot read \(path)")
 }
-precondition(image.width == 10496 && image.height == frameHeight)
+precondition(image.width == 11008 && image.height == frameHeight)
 
 var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
 let context = CGContext(data: &pixels,

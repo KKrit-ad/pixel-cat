@@ -8,7 +8,7 @@ guard let source = CGImageSourceCreateWithURL(url, nil),
       let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
     fatalError("Cannot read \(path)")
 }
-precondition(image.width == 10496 && image.height == 100)
+precondition(image.width == 11008 && image.height == 100)
 
 var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
 let context = CGContext(data: &pixels,
@@ -20,7 +20,7 @@ let context = CGContext(data: &pixels,
                         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
 context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
 
-let catFrames = Array(0...39) + Array(46...81)
+let catFrames = Array(0...39) + Array(46...85)
 var haloPixels = 0
 var affectedFrames = Set<Int>()
 for frame in catFrames {

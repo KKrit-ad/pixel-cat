@@ -47,6 +47,17 @@ final class PetController: NSObject {
     private struct CourierPayload {
         let files: [URL]
         let text: String
+        let question: String
+
+        init(files: [URL], text: String, question: String = "") {
+            self.files = files
+            self.text = text
+            self.question = question
+        }
+
+        func asking(_ question: String) -> CourierPayload {
+            CourierPayload(files: files, text: text, question: question)
+        }
 
         var label: String {
             if files.count == 1 { return files[0].lastPathComponent }
@@ -56,8 +67,26 @@ final class PetController: NSObject {
         }
 
         var pasteboardText: String {
-            if !files.isEmpty { return files.map(\.path).joined(separator: "\n") }
-            return text
+            let request = question.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !request.isEmpty else {
+                if !files.isEmpty { return files.map(\.path).joined(separator: "\n") }
+                return text
+            }
+            if !files.isEmpty {
+                let paths = files.map { "- \($0.path)" }.joined(separator: "\n")
+                return "\(request)\n\nไฟล์ที่ฉันลากมาให้จาก PixelCat:\n\(paths)"
+            }
+            return "\(request)\n\nข้อความที่ฉันลากมาให้จาก PixelCat:\n---\n\(text)\n---"
+        }
+    }
+    private struct DeliveryBatch {
+        let id: UUID
+        var items: [DeliveryItem]
+        let arrivedAt: Double
+
+        var title: String {
+            if items.count == 1 { return items[0].url.lastPathComponent }
+            return "พัสดุใหม่ \(items.count) ไฟล์"
         }
     }
     private struct ContextRescue {
@@ -168,7 +197,20 @@ final class PetController: NSObject {
     private var focusMenuItem: NSMenuItem?
     private var workInboxItem: NSMenuItem?
     private var motionMenuItem: NSMenuItem?
+    private var cinemaMenuItem: NSMenuItem?
     private var timer: Timer?
+    private var deliveryMenuItem: NSMenuItem?
+    private var deliveryWatcher = DeliveryWatcher()
+    private var deliveryEnabled = UserDefaults.standard.object(forKey: "deliveryEnabled") as? Bool
+        ?? true
+    private var deliveryPoll = 0.0
+    private var deliveryQuiet = 0.0
+    private var collectingDeliveries: [DeliveryItem] = []
+    private var deliveryQueue: [DeliveryBatch] = []
+    private var deliveryHistory: [DeliveryBatch] = []
+    private var activeDelivery: DeliveryBatch?
+    private var lastDeliveryStayedLocal = false
+    private var lastSimulatedDeliveryAction = ""
     private static let companionHotKeySignature: OSType = 0x50434154 // "PCAT"
     private var companionHotKeyRef: EventHotKeyRef?
     private var companionHotKeyHandler: EventHandlerRef?
@@ -182,6 +224,17 @@ final class PetController: NSObject {
         return MotionLevel(rawValue: defaults.integer(forKey: "motionLevel")) ?? .normal
     }()
     private var motionReductionOverride: Bool?       // ใช้เฉพาะ simulation; ปกติอ่านจาก macOS
+    private var cinemaPreference: CinemaPreference = {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: "cinemaPreference") != nil else { return .automatic }
+        return CinemaPreference(rawValue: defaults.integer(forKey: "cinemaPreference"))
+            ?? .automatic
+    }()
+    private var cinemaPoll = 0.0
+    private var cinemaCandidate: Bool?
+    private var cinemaCandidateCount = 0
+    private var cinemaHidden = false
+    private var cinemaRestoreWindows: [(window: NSWindow, alpha: CGFloat)] = []
 
     // เก็บเป็นหน่วยสิบเท่า (25 = 2.5x) จะได้เลือกครึ่งขั้นได้
     private var scale: CGFloat = {
@@ -251,6 +304,10 @@ final class PetController: NSObject {
     private var pendingCourierPayload: CourierPayload?
     private var courierChoices: [String: WorkSession] = [:]
     private var courierDropRegistered = false
+    private var courierPasteGeneration = 0
+    private var courierPastePermissionOverride: Bool?
+    private var courierFrontmostOverride: Bool?
+    private var lastSimulatedCourierPaste = false
     private var lastSimulatedOpenURL = ""
     private var contextRescueOffered: Set<String> = []
     private static let rescueHistoryKey = "pixelcat.rescueHistory"
@@ -331,10 +388,76 @@ final class PetController: NSObject {
         setupProp(geckoWindow, geckoView)
         geckoWindow.ignoresMouseEvents = false
         geckoView.onClick = { [weak self] in self?.dismissGeckoByClick() }
+        // feature gate นี้อยู่ฝั่งบัญชี Claude และคงอยู่ข้ามการเปิด PixelCat ใหม่
+        // ถ้า log ล่าสุดเคยปฏิเสธแล้ว ให้ใช้ sidebar fallback ตั้งแต่คลิกแรก
+        claudeSessionLinkBlocked = ClaudeDeepLinkLog.isRejected(
+            ClaudeDeepLinkLog.tail(at: Self.claudeLogPath)
+        )
+        deliveryWatcher.seed()       // ของที่มีอยู่ก่อนเปิดแอปไม่ใช่พัสดุใหม่
         buildMenu()
         registerCompanionHotKey()
         syncMenu()
         applyFrame()
+
+        if ProcessInfo.processInfo.environment["PIXELCAT_SIMDELIVERY"] != nil {
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent(
+                "pixelcat-delivery-ui-\(UUID().uuidString)", isDirectory: true
+            )
+            let downloads = root.appendingPathComponent("Downloads", isDirectory: true)
+            let desktop = root.appendingPathComponent("Desktop", isDirectory: true)
+            try? fm.createDirectory(at: downloads, withIntermediateDirectories: true)
+            try? fm.createDirectory(at: desktop, withIntermediateDirectories: true)
+            deliveryWatcher = DeliveryWatcher(downloads: downloads, desktop: desktop)
+            deliveryWatcher.seed()
+            try? Data("one".utf8).write(to: downloads.appendingPathComponent("one.pdf"))
+            try? Data("two".utf8).write(to: downloads.appendingPathComponent("two.png"))
+            deliveryPoll = 0; pollDeliveries(1.0)   // พบครั้งแรก แต่ยังรอขนาดนิ่ง
+            deliveryPoll = 0; pollDeliveries(1.0)   // stable แล้ว เริ่มรวมพัสดุ
+            deliveryQuiet = 0; pollDeliveries(0.01)
+            let detected = activeDelivery?.items.count == 2
+            let grouped = deliveryHistory.first?.items.count == 2
+            let pose = state == "delivery" || state == "deliveryReady"
+            let actionIDs = Set(bubbleView.actions.map(\.id))
+            let actions = actionIDs == Set([.open, .keepDelivery, .sendDelivery,
+                                            .dismissDelivery])
+            let local = lastDeliveryStayedLocal
+            try? fm.removeItem(at: root)
+            let ok = detected && grouped && pose && actions && local
+            FileHandle.standardError.write(
+                "SIM DELIVERY detected=\(detected) grouped=\(grouped) pose=\(pose) "
+                    .appending("actions=\(actions) local=\(local)\n").data(using: .utf8)!
+            )
+            NSApp.terminate(nil)
+            if !ok { exit(2) }
+            return
+        }
+
+        if ProcessInfo.processInfo.environment["PIXELCAT_SIMCINEMA"] != nil {
+            // ตรวจ integration ของหน้าต่างทุกชนิด โดยไม่ต้องเปิดวิดีโอ Full Screen จริง
+            let simChat = NSWindow(contentRect: NSRect(x: 20, y: 20, width: 240, height: 120),
+                                   styleMask: .borderless, backing: .buffered, defer: false)
+            chatWindow = simChat
+            for w in [bubbleWindow, heartWindow, ballWindow, geckoWindow, simChat] {
+                w.alphaValue = 1
+                w.orderFrontRegardless()
+            }
+            let all = companionWindows()
+            let startedVisible = all.allSatisfy(\.isVisible)
+            setCinemaHidden(true)
+            let hiddenAll = cinemaHidden && all.allSatisfy { !$0.isVisible }
+            setCinemaHidden(false)
+            let restoredAll = !cinemaHidden && all.allSatisfy(\.isVisible)
+            let modes = makeCinemaMenu().items.count == CinemaPreference.allCases.count
+            let ok = startedVisible && hiddenAll && restoredAll && modes
+            FileHandle.standardError.write(
+                "SIM CINEMA hidden=\(hiddenAll) restored=\(restoredAll) modes=\(modes)\n"
+                    .data(using: .utf8)!
+            )
+            NSApp.terminate(nil)
+            if !ok { exit(2) }
+            return
+        }
 
         if ProcessInfo.processInfo.environment["PIXELCAT_SIMVOICE"] != nil {
             let voice = CatVoice.shared
@@ -412,6 +535,8 @@ final class PetController: NSObject {
         }
 
         if ProcessInfo.processInfo.environment["PIXELCAT_SIMOPENROUTE"] != nil {
+            // ผลจาก Claude จริงในเครื่องต้องไม่ทำให้ simulation เปลี่ยนเงื่อนไขเริ่มต้น
+            self.claudeSessionLinkBlocked = false
             // ห้องที่ยังเปิดอยู่ต้องสลับไปหาแอป ไม่ใช่ resume ซึ่งจะได้ห้องซ้ำชื่อเดิม
             // ต้องใช้แอป GUI จริงสักตัว เพราะ PixelCat เองเป็นแอปเมนูบาร์ที่โฟกัสไม่ได้
             let mine = NSWorkspace.shared.runningApplications
@@ -1020,6 +1145,20 @@ final class PetController: NSObject {
                                          focusURL: "warp://session/claude", appPIDs: [],
                                          sessionID: "", topic: "Claude target")
                 self.workSessions = [codex, claude]
+                let dragged = URL(fileURLWithPath: "/tmp/drag report.pdf")
+                let accepted = self.receiveCourierDrop(files: [dragged], text: nil)
+                let askVisible = self.chatWindow?.isVisible == true
+                    && self.pendingCourierPayload?.files == [dragged]
+                let suggested = self.chatInput?.stringValue == "ช่วยสรุปไฟล์นี้ให้หน่อย"
+                let listeningPose = self.state == "tilt" || self.reduceMotionEnabled
+                let askMenu = self.prepareCourierQuestion("หาประเด็นสำคัญสามข้อ")
+                let composed = self.pendingCourierPayload?.pasteboardText ?? ""
+                let asked = askMenu != nil
+                    && composed.contains("หาประเด็นสำคัญสามข้อ")
+                    && composed.contains(dragged.path)
+                self.pendingCourierPayload = nil
+                self.courierChoices.removeAll()
+                self.chatWindow?.orderOut(nil)
                 let menu = self.makeCourierTargetMenu()
                 let titles = menu.items.map(\.title)
                 let sections = titles.contains("Codex") && titles.contains("Claude Code")
@@ -1029,21 +1168,27 @@ final class PetController: NSObject {
                 let safePayload = payload.pasteboardText == hostile
                 self.motionLevel = .normal
                 self.motionReductionOverride = false
+                self.courierPastePermissionOverride = true
+                self.courierFrontmostOverride = true
                 self.performCourierDelivery(payload, to: codex)
                 let animated = self.state == "courier"
                 for _ in 0..<360 { self.tick(1.0 / 60.0) }
                 let redirected = self.lastSimulatedOpenURL == codex.focusURL
+                let autoPaste = self.lastSimulatedCourierPaste
                 self.motionReductionOverride = true
                 self.lastSimulatedOpenURL = ""
                 self.performCourierDelivery(payload, to: claude)
                 let reduced = self.state != "courier"
                     && self.lastSimulatedOpenURL == claude.focusURL
                 let registered = self.courierDropRegistered
+                let dragToAsk = accepted && askVisible && suggested && listeningPose && asked
                 let ok = registered && sections && safePayload && animated && redirected && reduced
+                    && dragToAsk && autoPaste
                 FileHandle.standardError.write(
                     ("SIM COURIER registered=\(registered) sections=\(sections) "
                      + "safePayload=\(safePayload) animated=\(animated) "
-                     + "redirected=\(redirected) reduced=\(reduced)\n").data(using: .utf8)!
+                     + "redirected=\(redirected) reduced=\(reduced) "
+                     + "dragToAsk=\(dragToAsk) autoPaste=\(autoPaste)\n").data(using: .utf8)!
                 )
                 NSApp.terminate(nil)
                 if !ok { exit(2) }
@@ -2477,6 +2622,26 @@ final class PetController: NSObject {
         return menu
     }
 
+    private var cinemaMenuTitle: String {
+        "Cinema Mode • \(cinemaPreference.label)"
+    }
+
+    private func makeCinemaMenu() -> NSMenu {
+        let menu = NSMenu()
+        for preference in CinemaPreference.allCases {
+            let entry = NSMenuItem(
+                title: "\(preference.label) — \(preference.detail)",
+                action: #selector(setCinemaPreference(_:)),
+                keyEquivalent: ""
+            )
+            entry.target = self
+            entry.tag = 60 + preference.rawValue
+            entry.state = cinemaPreference == preference ? .on : .off
+            menu.addItem(entry)
+        }
+        return menu
+    }
+
     private func buildMenu() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.title = "🐈"
@@ -2515,7 +2680,13 @@ final class PetController: NSObject {
         motionMenuItem = motionItem
         motionItem.submenu = makeMotionMenu()
         menu.addItem(motionItem)
+        let cinemaItem = NSMenuItem(title: cinemaMenuTitle, action: nil, keyEquivalent: "")
+        cinemaMenuItem = cinemaItem
+        cinemaItem.submenu = makeCinemaMenu()
+        menu.addItem(cinemaItem)
         menu.addItem(makeCompanionMenuItem())
+        deliveryMenuItem = makeDeliveryMenuItem()
+        menu.addItem(deliveryMenuItem!)
         fileSearchMenuItem = makeFileSearchMenuItem()
         menu.addItem(fileSearchMenuItem!)
         rescueHistoryItem = makeRescueHistoryMenu()
@@ -2553,7 +2724,11 @@ final class PetController: NSObject {
                                 action: nil, keyEquivalent: "")
         motion.submenu = makeMotionMenu()
         m.addItem(motion)
+        let cinema = NSMenuItem(title: cinemaMenuTitle, action: nil, keyEquivalent: "")
+        cinema.submenu = makeCinemaMenu()
+        m.addItem(cinema)
         m.addItem(makeCompanionMenuItem())
+        m.addItem(makeDeliveryMenuItem())
         m.addItem(makeFileSearchMenuItem())
 
         // เด้งข้างตัวน้อง ถ้าชิดขอบขวาจอให้ไปโผล่ทางซ้ายแทน
@@ -2612,6 +2787,9 @@ final class PetController: NSObject {
             chatWindow.makeFirstResponder(chatInput)
             return
         }
+        // ถ้ากล่อง Drag-to-Ask ถูกปิดด้วย Esc แล้วผู้ใช้กดคีย์ลัดภายหลัง
+        // ให้กลับมาเป็นการคุยปกติ ไม่พ่วงไฟล์เก่าที่ค้างไว้โดยไม่ตั้งใจ
+        pendingCourierPayload = nil
         openCompanionChat()
     }
 
@@ -2628,13 +2806,20 @@ final class PetController: NSObject {
             w.collectionBehavior = window.collectionBehavior
             w.isReleasedWhenClosed = false
             w.contentView = bubble
+            w.onCancel = { [weak self] in self?.cancelCourierQuestion() }
             bubble.onWidthChange = { [weak self] newWidth in self?.resizeChatBubble(to: newWidth) }
             chatWindow = w
             chatInput = bubble.field
             chatSendButton = nil
         }
-        chatInput?.stringValue = ""
-        resizeChatBubble(to: ChatBubbleInputView.minWidth)
+        let askingAboutFile = pendingCourierPayload != nil
+        let initialText = pendingCourierPayload.map(suggestedCourierQuestion) ?? ""
+        chatInput?.stringValue = initialText
+        (chatWindow?.contentView as? ChatBubbleInputView)?.setPlaceholder(
+            askingAboutFile ? "อยากถาม AI ว่าอะไรเกี่ยวกับไฟล์นี้…" : "คุยกับอั่งเปา…"
+        )
+        resizeChatBubble(to: initialText.isEmpty
+            ? ChatBubbleInputView.minWidth : ChatBubbleInputView.width(for: initialText))
         guard let w = chatWindow else { return }
         w.level = bubbleWindow.level                  // ตามชั้นเดียวกับกรอบคำพูดเสมอ
         placeChatBubble()
@@ -2648,6 +2833,7 @@ final class PetController: NSObject {
             guard let self, let window = self.chatWindow, let input = self.chatInput else { return }
             window.makeFirstResponder(input)
             (input.currentEditor() as? NSTextView)?.insertionPointColor = PixelBubble.ink
+            if askingAboutFile { input.selectText(nil) }
         }
     }
 
@@ -2670,6 +2856,20 @@ final class PetController: NSObject {
         guard !chatBusy, let input = chatInput else { return }
         let message = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { return }
+        if pendingCourierPayload != nil {
+            guard let menu = prepareCourierQuestion(message) else { return }
+            say("จะให้น้องเอาคำถามไปส่งงานไหน?", for: 4.0)
+            menu.popUp(positioning: nil,
+                       at: NSPoint(x: view.bounds.midX, y: view.bounds.maxY - 4), in: view)
+            // popUp เป็น synchronous; ถ้าเลือกจริง chooseCourierTarget จะล้าง payload ไปแล้ว
+            if pendingCourierPayload != nil {
+                pendingCourierPayload = nil
+                courierChoices.removeAll()
+                say("ยังไม่ได้ส่งนะ ลากมาให้น้องใหม่ได้เสมอ", for: 3.0)
+                transitionState(to: "sit", duration: 1.0)
+            }
+            return
+        }
         if let query = fileFinder.query(from: message) {
             input.stringValue = ""
             chatBusy = true
@@ -2940,6 +3140,78 @@ final class PetController: NSObject {
         return item
     }
 
+    private func makeDeliveryMenuItem() -> NSMenuItem {
+        let suffix = deliveryEnabled ? "เปิด" : "ปิด"
+        let item = NSMenuItem(title: "Delivery Cat • \(suffix)", action: nil,
+                              keyEquivalent: "")
+        let menu = NSMenu(title: "Delivery Cat")
+        let toggle = NSMenuItem(title: deliveryEnabled ? "หยุดเฝ้าไฟล์ใหม่" : "เริ่มเฝ้าไฟล์ใหม่",
+                                action: #selector(toggleDeliveryCat), keyEquivalent: "")
+        toggle.target = self
+        toggle.state = deliveryEnabled ? .on : .off
+        menu.addItem(toggle)
+        menu.addItem(.separator())
+        if deliveryHistory.isEmpty {
+            let empty = NSMenuItem(title: "ยังไม่มีพัสดุใหม่ในรอบนี้", action: nil,
+                                   keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+        } else {
+            for batch in deliveryHistory.prefix(10) {
+                let entry = NSMenuItem(title: batch.title,
+                                       action: #selector(openDeliveryHistory(_:)),
+                                       keyEquivalent: "")
+                entry.target = self
+                entry.representedObject = batch.items.map { $0.url.path }
+                entry.isEnabled = batch.items.contains {
+                    FileManager.default.fileExists(atPath: $0.url.path)
+                }
+                menu.addItem(entry)
+            }
+        }
+        let note = NSMenuItem(title: "เฝ้า Downloads, AirDrop และ Screenshot แบบ local",
+                              action: nil, keyEquivalent: "")
+        note.isEnabled = false
+        menu.addItem(.separator())
+        menu.addItem(note)
+        item.submenu = menu
+        return item
+    }
+
+    private func refreshDeliveryMenu() {
+        guard let item = deliveryMenuItem else { return }
+        let replacement = makeDeliveryMenuItem()
+        item.title = replacement.title
+        item.submenu = replacement.submenu
+    }
+
+    @objc private func toggleDeliveryCat() {
+        deliveryEnabled.toggle()
+        UserDefaults.standard.set(deliveryEnabled, forKey: "deliveryEnabled")
+        if deliveryEnabled {
+            deliveryWatcher.seed()
+            say("น้องจะเฝ้าพัสดุใหม่ให้นะ", for: 3.0)
+        } else {
+            collectingDeliveries.removeAll()
+            deliveryQueue.removeAll()
+            if activeDelivery != nil {
+                activeDelivery = nil
+                speakFor = 0
+                hideBubble()
+            }
+            say("พักงานส่งพัสดุก่อนนะ", for: 3.0)
+        }
+        refreshDeliveryMenu()
+    }
+
+    @objc private func openDeliveryHistory(_ sender: NSMenuItem) {
+        guard let paths = sender.representedObject as? [String] else { return }
+        let urls = paths.map { URL(fileURLWithPath: $0) }
+            .filter { FileManager.default.fileExists(atPath: $0.path) }
+        guard !urls.isEmpty else { return }
+        NSWorkspace.shared.activateFileViewerSelecting(urls)
+    }
+
     private func refreshFileSearchMenu() {
         guard let item = fileSearchMenuItem else { return }
         let replacement = makeFileSearchMenuItem()
@@ -3184,6 +3456,9 @@ final class PetController: NSObject {
         }
         motionMenuItem?.title = "ความซน • \(effectiveMotionLevel.label)"
         motionMenuItem?.submenu = makeMotionMenu()
+        cinemaMenuItem?.title = cinemaMenuTitle
+        cinemaMenuItem?.submenu = makeCinemaMenu()
+        refreshDeliveryMenu()
         updateFocusUI(force: true)
     }
 
@@ -3743,6 +4018,180 @@ final class PetController: NSObject {
         return true
     }
 
+    // MARK: Delivery Cat
+
+    private func pollDeliveries(_ dt: Double) {
+        guard deliveryEnabled else { return }
+        deliveryPoll -= dt
+        if deliveryPoll <= 0 {
+            deliveryPoll = 0.8
+            let arrived = deliveryWatcher.poll()
+            if !arrived.isEmpty {
+                lastDeliveryStayedLocal = true
+                let known = Set(collectingDeliveries.map { $0.url.path })
+                collectingDeliveries.append(contentsOf: arrived.filter { !known.contains($0.url.path) })
+                deliveryQuiet = 1.2
+            }
+        }
+
+        guard !collectingDeliveries.isEmpty else {
+            showNextDelivery()
+            return
+        }
+        deliveryQuiet -= dt
+        guard deliveryQuiet <= 0 else { return }
+        let batch = DeliveryBatch(id: UUID(), items: collectingDeliveries,
+                                  arrivedAt: Date().timeIntervalSince1970)
+        collectingDeliveries.removeAll()
+        deliveryHistory.insert(batch, at: 0)
+        if deliveryHistory.count > 10 { deliveryHistory.removeLast(deliveryHistory.count - 10) }
+        refreshDeliveryMenu()
+
+        if speechOn {
+            deliveryQueue.append(batch)
+            showNextDelivery()
+        } else {
+            playDeliveryPose(id: nil, waiting: false)
+        }
+    }
+
+    private func deliveryMessage(_ batch: DeliveryBatch) -> String {
+        guard batch.items.count == 1, let item = batch.items.first else {
+            return "น้องคาบพัสดุใหม่มาให้ \(batch.items.count) ไฟล์"
+        }
+        let name = item.url.lastPathComponent
+        let short = name.count > 42 ? String(name.prefix(40)) + "…" : name
+        return "\(item.kind.label) \(short) เสร็จแล้ว"
+    }
+
+    private func playDeliveryPose(id: UUID?, waiting: Bool) {
+        guard !held else { return }
+        if reduceMotionEnabled || effectiveMotionLevel == .calm {
+            setState("deliveryReady", duration: waiting ? 12 : 3) { [weak self] in self?.pickIdle() }
+            return
+        }
+        setState("delivery", duration: 1.16) { [weak self] in
+            guard let self else { return }
+            if waiting, id == self.activeDelivery?.id {
+                self.setState("deliveryReady", duration: 99)
+            } else {
+                self.transitionState(to: "sit", duration: 2.0) { [weak self] in self?.pickIdle() }
+            }
+        }
+    }
+
+    private func showNextDelivery() {
+        guard speechOn, focusPhase == .idle, !cinemaHidden, !held, !chatBusy,
+              activeDelivery == nil, activeWorkNotice == nil, activeContextRescue == nil,
+              !deliveryQueue.isEmpty else { return }
+        let batch = deliveryQueue.removeFirst()
+        activeDelivery = batch
+        bubbleTarget = nil
+        playDeliveryPose(id: batch.id, waiting: true)
+        say(deliveryMessage(batch), for: 14.0,
+            actions: [SmartBubbleAction(id: .open, title: "เปิด"),
+                      SmartBubbleAction(id: .keepDelivery, title: "เก็บ"),
+                      SmartBubbleAction(id: .sendDelivery, title: "ส่ง AI"),
+                      SmartBubbleAction(id: .dismissDelivery, title: "ผ่านก่อน")])
+    }
+
+    private func replaceDeliveryHistory(_ batch: DeliveryBatch) {
+        if let index = deliveryHistory.firstIndex(where: { $0.id == batch.id }) {
+            deliveryHistory[index] = batch
+            refreshDeliveryMenu()
+        }
+    }
+
+    private func uniqueDeliveryDestination(for source: URL, in directory: URL) -> URL {
+        var candidate = directory.appendingPathComponent(source.lastPathComponent)
+        guard FileManager.default.fileExists(atPath: candidate.path) else { return candidate }
+        let ext = source.pathExtension
+        let stem = source.deletingPathExtension().lastPathComponent
+        var number = 2
+        repeat {
+            let name = ext.isEmpty ? "\(stem) (\(number))" : "\(stem) (\(number)).\(ext)"
+            candidate = directory.appendingPathComponent(name)
+            number += 1
+        } while FileManager.default.fileExists(atPath: candidate.path)
+        return candidate
+    }
+
+    private func clearActiveDelivery() {
+        activeDelivery = nil
+        bubbleView.actions = []
+        bubbleView.interactive = false
+        bubbleWindow.ignoresMouseEvents = true
+        if state == "delivery" || state == "deliveryReady" {
+            transitionState(to: "sit", duration: 1.2) { [weak self] in self?.pickIdle() }
+        }
+    }
+
+    private func performDeliveryAction(_ action: SmartBubbleActionID) {
+        guard var batch = activeDelivery else { return }
+        let existing = batch.items.filter {
+            FileManager.default.fileExists(atPath: $0.url.path)
+        }
+        switch action {
+        case .open:
+            if ProcessInfo.processInfo.environment["PIXELCAT_SIMDELIVERY"] != nil {
+                lastSimulatedDeliveryAction = "open"
+            } else if existing.count == 1, let url = existing.first?.url {
+                NSWorkspace.shared.open(url)
+            } else if !existing.isEmpty {
+                NSWorkspace.shared.activateFileViewerSelecting(existing.map(\.url))
+            }
+            clearActiveDelivery()
+            speakFor = 0
+            say(existing.isEmpty ? "พัสดุถูกย้ายไปแล้วนะ" : "เปิดพัสดุให้แล้ว", for: 3.5)
+
+        case .keepDelivery:
+            let manager = FileManager.default
+            let directory = manager.homeDirectoryForCurrentUser
+                .appendingPathComponent("Documents/Angpao Deliveries", isDirectory: true)
+            var moved: [DeliveryItem] = []
+            if ProcessInfo.processInfo.environment["PIXELCAT_SIMDELIVERY"] != nil {
+                lastSimulatedDeliveryAction = "keep"
+                moved = existing
+            } else if (try? manager.createDirectory(at: directory,
+                                                    withIntermediateDirectories: true)) != nil {
+                for item in existing {
+                    let destination = uniqueDeliveryDestination(for: item.url, in: directory)
+                    if (try? manager.moveItem(at: item.url, to: destination)) != nil {
+                        moved.append(DeliveryItem(url: destination, kind: item.kind,
+                                                  discoveredAt: item.discoveredAt))
+                    }
+                }
+            }
+            batch.items = moved
+            if !moved.isEmpty { replaceDeliveryHistory(batch) }
+            clearActiveDelivery()
+            speakFor = 0
+            say(moved.isEmpty ? "เก็บพัสดุไม่สำเร็จ ลองเปิดดูตำแหน่งก่อนนะ"
+                              : "เก็บไว้ใน Documents/Angpao Deliveries แล้ว",
+                for: 5.0)
+
+        case .sendDelivery:
+            let urls = existing.map(\.url)
+            clearActiveDelivery()
+            speakFor = 0
+            if ProcessInfo.processInfo.environment["PIXELCAT_SIMDELIVERY"] != nil {
+                lastSimulatedDeliveryAction = "send"
+            } else {
+                _ = receiveCourierDrop(files: urls, text: nil)
+            }
+
+        case .dismissDelivery:
+            lastSimulatedDeliveryAction = "dismiss"
+            clearActiveDelivery()
+            speakFor = 0
+            hideBubble()
+            transitionState(to: "sit", duration: 1.2) { [weak self] in self?.pickIdle() }
+
+        case .summarize, .helpFix, .later:
+            return
+        }
+    }
+
     // MARK: Drag Courier
 
     func courierDropRegistrationChanged(_ registered: Bool) {
@@ -3766,17 +4215,64 @@ final class PetController: NSObject {
         let safeText = safeFiles.isEmpty
             ? (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines) : ""
         guard !safeFiles.isEmpty || !safeText.isEmpty else { return false }
+        guard workSessions.contains(where: { $0.source == "codex" || $0.source == "claude" }) else {
+            say("ยังไม่มีงาน Codex หรือ Claude ให้ถาม", for: 3.5)
+            return true
+        }
         pendingCourierPayload = CourierPayload(files: safeFiles, text: safeText)
+        if focusPhase == .idle, !held {
+            setState(reduceMotionEnabled ? "sit" : "tilt", duration: 999)
+        }
+        openCompanionChat()
+        return true
+    }
+
+    private func suggestedCourierQuestion(_ payload: CourierPayload) -> String {
+        if payload.files.count > 1 {
+            return "ช่วยดูไฟล์เหล่านี้และสรุปสิ่งสำคัญให้หน่อย"
+        }
+        guard let file = payload.files.first else {
+            return "ช่วยอ่านข้อความนี้และบอกสิ่งสำคัญให้หน่อย"
+        }
+        switch file.pathExtension.lowercased() {
+        case "pdf", "doc", "docx", "rtf", "txt", "md":
+            return "ช่วยสรุปไฟล์นี้ให้หน่อย"
+        case "png", "jpg", "jpeg", "gif", "webp", "heic", "tiff":
+            return "ช่วยดูภาพนี้และบอกว่ามีอะไรสำคัญ"
+        case "swift", "m", "mm", "h", "js", "jsx", "ts", "tsx", "py", "rb", "go", "rs",
+             "java", "kt", "c", "cc", "cpp", "cs", "php", "sh", "zsh":
+            return "ช่วยตรวจไฟล์นี้และแนะนำสิ่งที่ควรปรับ"
+        case "zip", "tar", "gz", "7z", "rar":
+            return "ช่วยดูว่าไฟล์นี้มีอะไรและแนะนำขั้นตอนต่อไป"
+        default:
+            return "ช่วยดูไฟล์นี้และบอกสิ่งสำคัญให้หน่อย"
+        }
+    }
+
+    private func prepareCourierQuestion(_ question: String) -> NSMenu? {
+        guard let payload = pendingCourierPayload else { return nil }
+        let clean = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return nil }
+        pendingCourierPayload = payload.asking(clean)
+        chatInput?.stringValue = ""
+        chatWindow?.orderOut(nil)
         let menu = makeCourierTargetMenu()
         guard !courierChoices.isEmpty else {
             pendingCourierPayload = nil
-            say("ยังไม่มีงาน Codex หรือ Claude ให้ส่ง", for: 3.5)
-            return true
+            say("งาน Codex กับ Claude ปิดไปแล้ว ลากมาให้น้องใหม่ได้เลย", for: 4.0)
+            transitionState(to: "sit", duration: 1.0)
+            return nil
         }
-        say("จะให้น้องส่งไปงานไหน?", for: 3.5)
-        menu.popUp(positioning: nil,
-                   at: NSPoint(x: view.bounds.midX, y: view.bounds.maxY - 4), in: view)
-        return true
+        return menu
+    }
+
+    private func cancelCourierQuestion() {
+        guard pendingCourierPayload != nil else { return }
+        pendingCourierPayload = nil
+        courierChoices.removeAll()
+        if focusPhase == .idle, !held {
+            transitionState(to: "sit", duration: 1.0)
+        }
     }
 
     private func makeCourierTargetMenu() -> NSMenu {
@@ -3806,7 +4302,9 @@ final class PetController: NSObject {
             if source == "codex" { menu.addItem(.separator()) }
         }
         menu.addItem(.separator())
-        let hint = NSMenuItem(title: "คัดลอกไว้ให้วางด้วย ⌘V", action: nil, keyEquivalent: "")
+        let hint = NSMenuItem(title: "วางให้อัตโนมัติเมื่ออนุญาต Accessibility • ไม่กด Enter",
+                              action: nil,
+                              keyEquivalent: "")
         hint.isEnabled = false
         menu.addItem(hint)
         return menu
@@ -3834,8 +4332,14 @@ final class PetController: NSObject {
             guard let self else { return }
             self.hurry = false
             self.openTarget(session)
-            self.say("ส่ง \(payload.label) ให้ \(self.workSourceName(session)) แล้ว • วางด้วย ⌘V",
-                     for: 7.0, target: session)
+            let verb = payload.question.isEmpty ? "ส่ง" : "เตรียมคำถามเรื่อง"
+            if self.scheduleCourierPaste(to: session) {
+                self.say("\(verb) \(payload.label) ให้ \(self.workSourceName(session)) แล้ว • กำลังวางให้",
+                         for: 7.0, target: session)
+            } else {
+                self.say("\(verb) \(payload.label) ให้ \(self.workSourceName(session)) แล้ว • วางด้วย ⌘V",
+                         for: 7.0, target: session)
+            }
             self.transitionState(to: "sit", duration: 2.0)
         }
         // Calm และ Reduce Motion ใช้การส่งทันที ไม่เริ่ม courier แล้วถูก tick ถัดไปยกเลิกกลางทาง
@@ -3849,6 +4353,71 @@ final class PetController: NSObject {
         target = clampX(x + dir * 120)
         hurry = true
         setState("courier", duration: 99, then: finish)
+    }
+
+    /// วางอย่างเดียว ไม่กด Enter — พ่อยังเห็น prompt และเป็นคนยืนยันก่อนส่งทุกครั้ง
+    /// หาก Accessibility ยังไม่พร้อมจะคง clipboard ไว้ให้ ⌘V เองเหมือนเดิม
+    @discardableResult
+    private func scheduleCourierPaste(to session: WorkSession) -> Bool {
+        courierPasteGeneration += 1
+        let generation = courierPasteGeneration
+        let trusted = courierPastePermissionOverride ?? AXIsProcessTrusted()
+        guard trusted else {
+            requestAccessibilityOnce()
+            return false
+        }
+        if ProcessInfo.processInfo.environment["PIXELCAT_SIMCOURIER"] != nil {
+            return attemptCourierPaste(to: session, generation: generation)
+        }
+        for (attempt, delay) in [0.9, 1.7, 2.8].enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, generation == self.courierPasteGeneration else { return }
+                if self.attemptCourierPaste(to: session, generation: generation) { return }
+                if attempt == 2 {
+                    self.say("น้องเปิดงานให้แล้ว แต่ช่องพิมพ์ยังไม่พร้อม • วางด้วย ⌘V ได้เลย",
+                             for: 6.0, target: session)
+                }
+            }
+        }
+        return true
+    }
+
+    private func courierTargetIsFrontmost(_ session: WorkSession) -> Bool {
+        if let override = courierFrontmostOverride { return override }
+        guard let app = NSWorkspace.shared.frontmostApplication else { return false }
+        if session.appPIDs.contains(Int(app.processIdentifier)) { return true }
+        let identity = "\(app.localizedName ?? "") \(app.bundleIdentifier ?? "")".lowercased()
+        if session.source == "codex" {
+            return identity.contains("codex") || identity.contains("chatgpt")
+        }
+        return identity.contains("claude") || identity.contains("warp")
+            || identity.contains("iterm") || identity.contains("terminal")
+            || identity.contains("ghostty")
+    }
+
+    @discardableResult
+    private func attemptCourierPaste(to session: WorkSession, generation: Int) -> Bool {
+        guard generation == courierPasteGeneration, courierTargetIsFrontmost(session) else {
+            return false
+        }
+        if ProcessInfo.processInfo.environment["PIXELCAT_SIMCOURIER"] != nil {
+            lastSimulatedCourierPaste = true
+        } else {
+            guard let source = CGEventSource(stateID: .combinedSessionState),
+                  let down = CGEvent(keyboardEventSource: source,
+                                     virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: true),
+                  let up = CGEvent(keyboardEventSource: source,
+                                   virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: false) else {
+                return false
+            }
+            down.flags = .maskCommand
+            up.flags = .maskCommand
+            down.post(tap: .cghidEventTap)
+            up.post(tap: .cghidEventTap)
+        }
+        courierPasteGeneration += 1             // ยกเลิก retry ที่เหลือ ป้องกันวางซ้ำ
+        say("น้องวางคำถามให้แล้ว • ตรวจดูแล้วกด Enter ได้เลย", for: 7.0, target: session)
+        return true
     }
 
     /// ทางที่จะพากลับไปหางาน เรียงตามความเจาะจง แยกออกมาเป็นค่าเดียวเพื่อตรวจได้
@@ -3877,24 +4446,12 @@ final class PetController: NSObject {
     private static let claudeLogPath = NSString(string: "~/Library/Logs/Claude/main.log")
         .expandingTildeInPath
 
-    private func claudeLogTail(_ bytes: Int = 8192) -> String {
-        guard let handle = FileHandle(forReadingAtPath: Self.claudeLogPath) else { return "" }
-        defer { try? handle.close() }
-        guard let size = try? handle.seekToEnd() else { return "" }
-        try? handle.seek(toOffset: size > UInt64(bytes) ? size - UInt64(bytes) : 0)
-        let data = (try? handle.readToEnd()) ?? Data()
-        return String(data: data, encoding: .utf8) ?? ""
-    }
-
-    private func verifyClaudeSessionLink(pids: [Int], path: String, sessionID: String,
-                                         topic: String, project: String) {
-        let before = claudeLogTail().count
+    private func verifyClaudeSessionLink(from cursor: UInt64, pids: [Int], path: String,
+                                         sessionID: String, topic: String, project: String) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
             guard let self else { return }
-            let added = String(self.claudeLogTail().dropFirst(before))
-            guard added.contains("code entry deep link gated off")
-                    || added.contains("code entry link invalid")
-                    || added.contains("unrecognized code path") else { return }
+            let added = ClaudeDeepLinkLog.text(at: Self.claudeLogPath, since: cursor)
+            guard ClaudeDeepLinkLog.isRejected(added) else { return }
             self.claudeSessionLinkBlocked = true
             self.requestAccessibilityOnce()
             self.openTargetFallback(pids: pids, path: path, sessionID: sessionID,
@@ -3902,13 +4459,13 @@ final class PetController: NSObject {
         }
     }
 
-    /// ขอสิทธิ์ Accessibility ครั้งเดียว เพราะการกดแถวแทนพ่อต้องใช้สิทธิ์นี้
+    /// ขอสิทธิ์ Accessibility ครั้งเดียว เพราะการกดแถวหรือวางข้อความแทนพ่อต้องใช้สิทธิ์นี้
     private func requestAccessibilityOnce() {
         guard !askedForAccessibility, !AXIsProcessTrusted() else { return }
         askedForAccessibility = true
         let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue()
         _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
-        say("ขอสิทธิ์ช่วยเหลือการเข้าถึงให้น้องหน่อยนะคะ น้องจะได้กดเปิดห้องที่พ่อสั่งได้",
+        say("ขอสิทธิ์ Accessibility ให้น้องหน่อยนะคะ จะได้เปิดห้องและวางคำถามให้พ่อได้",
             for: 10.0)
     }
 
@@ -3928,17 +4485,22 @@ final class PetController: NSObject {
     private func openTarget(focus: String, path: String, pidList: String, sessionID: String,
                             topic: String = "", project: String = "") {
         let pids = pidList.split(separator: ",").compactMap { Int($0) }
+        if claudeSessionLinkBlocked, !topic.isEmpty, !AXIsProcessTrusted() {
+            requestAccessibilityOnce()
+        }
         switch openRoute(focus: focus, path: path, pids: pids, sessionID: sessionID,
                          topic: topic) {
         case .deepLink:
             // deep link ที่เจาะจงแท็บ — Warp สำหรับ Claude Code, codex:// สำหรับ Codex
             if let u = URL(string: focus), NSWorkspace.shared.open(u) { return }
         case .sessionLink:
+            // จำ offset ก่อนส่ง URL เพราะ Claude อาจตอบและเขียน log เร็วกว่าที่ open() คืนค่า
+            let cursor = ClaudeDeepLinkLog.cursor(at: Self.claudeLogPath)
             if let u = claudeSessionURL(sessionID), NSWorkspace.shared.open(u) {
                 // ลิงก์ห้องอาจถูกปิดไว้ฝั่งแอป แล้วเงียบไปเฉย ๆ ไม่พาไปไหน
                 // ถ้าเจอว่าถูกปิด ก็ดึงแอปขึ้นหน้าให้แทน จะได้ไม่กดแล้วไม่มีอะไรเกิดขึ้น
-                verifyClaudeSessionLink(pids: pids, path: path, sessionID: sessionID,
-                                        topic: topic, project: project)
+                verifyClaudeSessionLink(from: cursor, pids: pids, path: path,
+                                        sessionID: sessionID, topic: topic, project: project)
                 return
             }
         case .sidebarRow, .resume, .focusApp, .folder, .none:
@@ -4035,8 +4597,9 @@ final class PetController: NSObject {
 
     private func showPendingReturnRitual() {
         guard let summary = pendingReturnRitual,
-              focusPhase == .idle, !held, !airborne, !climbing, !chatBusy,
-              activeWorkNotice == nil, activeContextRescue == nil else { return }
+              focusPhase == .idle, !cinemaHidden, !held, !airborne, !climbing, !chatBusy,
+              activeWorkNotice == nil, activeContextRescue == nil,
+              activeDelivery == nil else { return }
         pendingReturnRitual = nil
         let keys = Set(summary.events.map(\.key))
         workNoticeQueue.removeAll { keys.contains(noticeKey($0.session)) }
@@ -4213,8 +4776,9 @@ final class PetController: NSObject {
     }
 
     private func showNextWorkNotice() {
-        guard speechOn, focusPhase == .idle, !held, !chatBusy, !companionReplyProtected,
-              activeWorkNotice == nil, activeContextRescue == nil,
+        guard speechOn, focusPhase == .idle, !cinemaHidden, !held, !chatBusy,
+              !companionReplyProtected,
+              activeWorkNotice == nil, activeContextRescue == nil, activeDelivery == nil,
               !workNoticeQueue.isEmpty else { return }
         let notice = workNoticeQueue.removeFirst()
         activeWorkNotice = notice
@@ -4259,6 +4823,10 @@ final class PetController: NSObject {
     }
 
     func performSmartBubbleAction(_ action: SmartBubbleActionID) {
+        if activeDelivery != nil {
+            performDeliveryAction(action)
+            return
+        }
         guard let notice = activeWorkNotice, let session = bubbleTarget else { return }
         switch action {
         case .open:
@@ -4284,6 +4852,8 @@ final class PetController: NSObject {
             bubbleView.actions = []
             speakFor = 0
             say("ได้เลย อีก 5 นาทีน้องค่อยเตือนใหม่นะ", for: 3.5)
+        case .keepDelivery, .sendDelivery, .dismissDelivery:
+            return
         }
     }
 
@@ -4545,6 +5115,7 @@ final class PetController: NSObject {
         UserDefaults.standard.set(speechOn, forKey: "speechOn")
         if speechOn {
             showNextWorkNotice()
+            if activeWorkNotice == nil { showNextDelivery() }
             if activeWorkNotice == nil {
                 say("เหมียว~")
                 CatVoice.shared.play(.meow, minGap: 0)
@@ -4618,6 +5189,18 @@ final class PetController: NSObject {
         }
     }
 
+    @objc private func setCinemaPreference(_ sender: NSMenuItem) {
+        guard let preference = CinemaPreference(rawValue: sender.tag - 60) else { return }
+        cinemaPreference = preference
+        UserDefaults.standard.set(preference.rawValue, forKey: "cinemaPreference")
+        cinemaPoll = 0
+        cinemaCandidate = nil
+        cinemaCandidateCount = 0
+        pollCinemaMode(0, force: true)
+        syncMenu()
+        if !cinemaHidden { say("Cinema Mode: \(preference.label)", for: 2.2) }
+    }
+
     /// หยุดเฉพาะ motion แรงที่กำลังเตรียมหรือกำลังวิ่งเมื่อเข้า Calm/Reduce Motion
     /// การเดินธรรมดายังทำต่อได้ เพราะไม่ได้ตั้ง hurry หรือ energetic intent เหล่านี้
     private func cancelEnergeticMotionIfNeeded() {
@@ -4660,7 +5243,8 @@ final class PetController: NSObject {
                      actions: [SmartBubbleAction] = []) {
         guard speechOn else { return }
         // ข้อความแจ้งงานสำคัญอยู่ค้างให้อ่านและคลิกได้ ไม่ให้อารมณ์พูดเล่นมาทับ
-        if (activeWorkNotice != nil || activeContextRescue != nil) && target == nil { return }
+        if (activeWorkNotice != nil || activeContextRescue != nil || activeDelivery != nil)
+            && target == nil && actions.isEmpty { return }
         bubbleView.text = text
         bubbleView.actions = actions
         fileSearchTarget = nil
@@ -4698,17 +5282,23 @@ final class PetController: NSObject {
             self.companionReplyProtected = false
             self.activeWorkNotice = nil
             self.activeContextRescue = nil
+            self.activeDelivery = nil
             if self.shepherdTarget?.id == self.bubbleTarget?.id {
                 self.shepherdTarget = nil
             }
             self.bubbleTarget = nil
             self.fileSearchTarget = nil
             self.showNextWorkNotice()
+            self.showNextDelivery()
         })
     }
 
     /// BubbleView เรียกเมธอดนี้เมื่อกล่องแจ้งงานถูกคลิก
     func openBubbleTarget() {
+        if activeDelivery != nil {
+            performDeliveryAction(.open)
+            return
+        }
         if let file = fileSearchTarget {
             fileSearchTarget = nil
             bubbleView.interactive = false
@@ -4736,6 +5326,116 @@ final class PetController: NSObject {
             return NIGHT_LINES.randomElement()!
         }
         return (LINES[state] ?? LINES["sit"]!).randomElement()!
+    }
+
+    // MARK: Cinema Mode
+
+    /// หน้าต่างทุกชิ้นที่เป็นส่วนหนึ่งของน้อง — status item ไม่รวม เพื่อให้เปลี่ยนโหมดกลับได้
+    private func companionWindows() -> [NSWindow] {
+        var windows = [window, bubbleWindow, heartWindow, ballWindow, geckoWindow]
+        if let chatWindow { windows.append(chatWindow) }
+        return windows
+    }
+
+    /// ระหว่างดูหนัง โค้ดส่วนอื่นอาจพยายามเปิด bubble/พร็อพขึ้นมาใหม่
+    /// เก็บหน้าต่างใหม่นั้นไว้ด้วย แล้วซ่อนทันทีเพื่อกลับมาได้ครบหลังออก Full Screen
+    private func enforceCinemaHidden() {
+        guard cinemaHidden else { return }
+        for w in companionWindows() where w.isVisible {
+            if !cinemaRestoreWindows.contains(where: { $0.window === w }) {
+                cinemaRestoreWindows.append((w, w.alphaValue))
+            }
+            w.orderOut(nil)
+        }
+    }
+
+    private func setCinemaHidden(_ hidden: Bool) {
+        guard hidden != cinemaHidden else {
+            if hidden { enforceCinemaHidden() }
+            return
+        }
+        if hidden {
+            cinemaHidden = true
+            cinemaRestoreWindows = companionWindows().filter(\.isVisible).map { ($0, $0.alphaValue) }
+            enforceCinemaHidden()
+            return
+        }
+
+        cinemaHidden = false
+        let restore = cinemaRestoreWindows
+        cinemaRestoreWindows.removeAll()
+        guard !restore.isEmpty else { return }
+
+        if reduceMotionEnabled || effectiveMotionLevel == .calm {
+            for item in restore {
+                item.window.alphaValue = item.alpha
+                item.window.orderFrontRegardless()
+            }
+            return
+        }
+
+        for item in restore {
+            item.window.alphaValue = 0
+            item.window.orderFrontRegardless()
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.24
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            for item in restore { item.window.animator().alphaValue = item.alpha }
+        }
+    }
+
+    /// แปลงพิกัด Window Server (ต้นกำเนิดบนซ้าย) เป็น AppKit (ล่างซ้าย)
+    /// อ่านแค่ PID/layer/alpha/bounds จึงไม่ต้องมี Screen Recording permission
+    private func cinemaWindowsOnScreen() -> [CinemaWindow] {
+        let flip = NSScreen.screens.first?.frame.maxY ?? 900
+        guard let list = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
+        ) as? [[String: Any]] else { return [] }
+
+        return list.compactMap { item in
+            guard let owner = (item[kCGWindowOwnerPID as String] as? NSNumber)?.intValue,
+                  let layer = (item[kCGWindowLayer as String] as? NSNumber)?.intValue,
+                  let raw = item[kCGWindowBounds as String] as? [String: Any],
+                  let x = (raw["X"] as? NSNumber)?.doubleValue,
+                  let y = (raw["Y"] as? NSNumber)?.doubleValue,
+                  let width = (raw["Width"] as? NSNumber)?.doubleValue,
+                  let height = (raw["Height"] as? NSNumber)?.doubleValue,
+                  width > 0, height > 0 else { return nil }
+            let bounds = CGRect(x: CGFloat(x), y: flip - CGFloat(y + height),
+                                width: CGFloat(width), height: CGFloat(height))
+            let alpha = (item[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1
+            return CinemaWindow(ownerPID: owner, bounds: bounds, layer: layer, alpha: alpha)
+        }
+    }
+
+    private func cinemaShouldHideNow() -> Bool {
+        guard cinemaPreference != .never,
+              let app = NSWorkspace.shared.frontmostApplication else { return false }
+        let screen = window.screen?.frame ?? currentScreen().frame
+        return CinemaModeDetector.shouldHide(
+            preference: cinemaPreference,
+            bundleID: app.bundleIdentifier ?? "",
+            frontmostPID: Int(app.processIdentifier),
+            screen: screen,
+            windows: cinemaWindowsOnScreen()
+        )
+    }
+
+    /// debounce สองรอบ ป้องกันน้องกะพริบหายระหว่าง animation เข้า/ออก Full Screen
+    private func pollCinemaMode(_ dt: Double, force: Bool = false) {
+        cinemaPoll -= dt
+        guard force || cinemaPoll <= 0 else { return }
+        cinemaPoll = 0.35
+        let desired = cinemaShouldHideNow()
+        if cinemaCandidate == desired {
+            cinemaCandidateCount += 1
+        } else {
+            cinemaCandidate = desired
+            cinemaCandidateCount = 1
+        }
+        guard force || cinemaCandidateCount >= 2 else { return }
+        setCinemaHidden(desired)
     }
 
     // MARK: geometry
@@ -5842,14 +6542,21 @@ final class PetController: NSObject {
     func tickForTests(_ dt: Double) { tick(dt) }
 
     private func tick(_ dt: Double) {
+        pollCinemaMode(dt)
         // โฟกัสกับตอนหลับต้องเงียบจริง ๆ ไม่งั้นเสียงน่ารักจะกลายเป็นเสียงกวน
-        CatVoice.shared.muted = focusPhase != .idle || napForced || state == "sleep"
+        CatVoice.shared.muted = cinemaHidden || focusPhase != .idle || napForced || state == "sleep"
         pollSessions(dt)
+        pollDeliveries(dt)
         runLocalCompanion(dt)
         updateCompanionThinking(dt)
         pollInbox(dt)
         runCheck(dt)
         updateFocus(dt)
+        if cinemaHidden {
+            // งานและ Focus timer ยังเดินต่อ แต่ไม่แสดง/ส่งเสียงรบกวนหนัง
+            enforceCinemaHidden()
+            return
+        }
         cancelEnergeticMotionIfNeeded()
         breakReminder(dt)
         if held && (NSEvent.pressedMouseButtons & 1) == 0 { release() }

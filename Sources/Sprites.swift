@@ -37,7 +37,9 @@ let POSES: [String: Pose] = [
     "testPass":    Pose(start: 71, count: 2, fps: 4.0),
     "testFail":    Pose(start: 73, count: 3, fps: 2.4),
     "permission":  Pose(start: 76, count: 2, fps: 2.0),
-    "coding":      Pose(start: 78, count: 4, fps: 5.2)
+    "coding":      Pose(start: 78, count: 4, fps: 5.2),
+    "delivery":    Pose(start: 82, count: 3, fps: 2.6),
+    "deliveryReady": Pose(start: 85, count: 1, fps: 1.0)
 ]
 
 // Pixel-aligned atlas metadata. ค่านี้เป็นส่วนหนึ่งของ sprite asset ไม่ได้คำนวณจาก test runtime

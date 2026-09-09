@@ -8,7 +8,7 @@ import Carbon
 import SQLite3
 
 // ─────────────────────────────────────────────────────────────
-// Sprite sheet — 82 frames of 128×100, embedded as a PNG so the app is one file.
+// Sprite sheet — 86 frames of 128×100, embedded as a PNG so the app is one file.
 // ─────────────────────────────────────────────────────────────
 let SPRITE_W = 128
 let SPRITE_H = 100
