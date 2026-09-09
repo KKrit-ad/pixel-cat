@@ -96,7 +96,24 @@ open ~/Desktop/pixel-cat/PixelCat.app
 | `Sources/Sprites.swift` | ตาราง `POSES` และตัวถอดสไปรต์ชีท |
 | `Sources/Views.swift` | ตัวแมว, หัวใจ, พร็อพ, กรอบคำพูด |
 | `Sources/ChatBubbleInput.swift` | ช่องพิมพ์ข้อความเหนือหัวน้อง |
-| `Sources/PetController.swift` | สถานะ, แอนิเมชัน, เมนู, กล่องงาน และการโต้ตอบทั้งหมด |
+| `Sources/PetController.swift` | แกนกลาง: นิยามสถานะ, พร็อพเพอร์ตี้, `init`, เรขาคณิต, แพลตฟอร์ม และ `tick` |
+| `Sources/PetController+Menu.swift` | เมนู 🐈 บนแถบเมนู |
+| `Sources/PetController+Speech.swift` | กรอบคำพูดและการพูดของน้อง |
+| `Sources/PetController+Play.swift` | ลูบหัว ลูกบอล และจิ้งจก |
+| `Sources/PetController+Cinema.swift` | ซ่อน/คืนหน้าต่างตามกติกา Cinema Mode |
+| `Sources/PetController+CompanionChat.swift` | กล่องคุยกับอั่งเปา และวงจรฟัง/คิด/ตอบ |
+| `Sources/PetController+Companion.swift` | AI companion ระยะที่ 1 — เมนู สถานะ และการตัดสินใจ local |
+| `Sources/PetController+WorkSources.swift` | อ่านสถานะงานจริงจาก Codex rollout (SQLite) และ event ของ Claude |
+| `Sources/PetController+WorkInbox.swift` | กล่องงานรวม Codex/Claude และ Task Shepherd |
+| `Sources/PetController+WorkNotices.swift` | พิธีต้อนรับกลับมา และคิวแจ้งเตือนสถานะงาน |
+| `Sources/PetController+OpenTarget.swift` | เส้นทางกลับไปหางาน — deep link, sidebar, resume, โฟลเดอร์ |
+| `Sources/PetController+ContextRescue.swift` | แพ็ก handoff ก่อน context เต็ม |
+| `Sources/PetController+Delivery.swift` | คิวพัสดุของ Delivery Cat และการตัดสินใจของพ่อ |
+| `Sources/PetController+Courier.swift` | Drag-to-Ask และ Drag Courier |
+| `Sources/PetController+DebugHarness.swift` | ทางเข้าเดียวของโหมดจำลอง เรียกสามหมวดด้านล่างตามลำดับ |
+| `Sources/PetController+DebugWork.swift` | โหมดจำลอง: งาน AI, พัสดุ และเส้นทางกลับไปหางาน |
+| `Sources/PetController+DebugMotion.swift` | โหมดจำลอง: แอนิเมชัน โฟกัส และการแจ้งเตือนงาน |
+| `Sources/PetController+DebugSnapshot.swift` | โหมดจำลอง: ของเล่น สแนปชอต และการยิงสมองจริง |
 | `Sources/CatVoice.swift` | คุมเสียงทั้งหมด: เปิด/ปิด, ระดับเสียง, เว้นจังหวะ, เงียบตอนโฟกัส |
 | `Sources/CatVoiceData.swift` | เสียง 5 แบบฝังเป็น WAV base64 |
 | `import-cat-voice.py` | ตัดเสียงจาก `voice/source/` ปรับความดัง แล้วฝังลง `Sources/CatVoiceData.swift` |
